@@ -1,0 +1,7 @@
+node_modules/
+.eve/
+.output/
+.venv/
+.data/
+integrations/
+agent/skills/eve/

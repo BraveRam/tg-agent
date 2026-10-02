@@ -14,8 +14,11 @@
     "start": "eve start",
     "typecheck": "tsc",
     "setup": "bun scripts/setup.ts",
-    "test": "node_modules/node/bin/node --import tsx --test tests/*.test.ts",
-    "doctor": "bun scripts/doctor.ts"
+    "test": "node_modules/node/bin/node --import tsx --test --test-isolation=none tests/*.test.ts",
+    "doctor": "bun scripts/doctor.ts",
+    "build:browser": "cd integrations/agent-browser && ../../node_modules/node/bin/node ../../node_modules/eve/bin/eve.js extension build",
+    "format": "prettier --write --ignore-unknown --no-error-on-unmatched-pattern agent scripts tests evals package.json tsconfig.json .prettierrc.json",
+    "format:check": "prettier --check --ignore-unknown --no-error-on-unmatched-pattern agent scripts tests evals package.json tsconfig.json .prettierrc.json"
   },
   "dependencies": {
     "@agent-browser/eve": "^0.38.2",
@@ -23,18 +26,23 @@
     "ai": "^7.0.105",
     "eve": "0.70.0",
     "luxon": "^3.7.2",
-    "zod": "4.5.4"
+    "zod": "4.5.4",
+    "@tg-agent/browser": "workspace:*"
   },
   "devDependencies": {
-    "@types/node": "24.x",
-    "typescript": "7.0.2",
-    "node": "24",
+    "@types/bun": "^1.3.0",
     "@types/luxon": "^3.7.1",
+    "@types/node": "24.x",
+    "node": "24",
+    "prettier": "3.8.1",
     "tsx": "^4.20.6",
-    "@types/bun": "^1.3.0"
+    "typescript": "5.9.3"
   },
   "engines": {
     "node": "24.x"
   },
-  "private": true
+  "private": true,
+  "workspaces": [
+    "integrations/agent-browser"
+  ]
 }

@@ -1,0 +1,165 @@
+// Generated from userbot/app.py; contract only, no credentials.
+export default {
+  openapi: "3.1.0",
+  info: { title: "tg-agent userbot reader", version: "0.1.0" },
+  paths: {
+    "/health": {
+      get: {
+        summary: "Health",
+        operationId: "userbotHealth",
+        parameters: [],
+        responses: {
+          "200": {
+            description: "Successful Response",
+            content: { "application/json": { schema: {} } },
+          },
+          "422": {
+            description: "Validation Error",
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/HTTPValidationError" } },
+            },
+          },
+        },
+        security: [{ internalBearer: [] }],
+      },
+    },
+    "/resolve": {
+      post: {
+        summary: "Resolve",
+        operationId: "resolveChannel",
+        parameters: [],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": { schema: { $ref: "#/components/schemas/ChannelRequest" } },
+          },
+        },
+        responses: {
+          "200": {
+            description: "Successful Response",
+            content: { "application/json": { schema: {} } },
+          },
+          "422": {
+            description: "Validation Error",
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/HTTPValidationError" } },
+            },
+          },
+        },
+        security: [{ internalBearer: [] }],
+      },
+    },
+    "/messages": {
+      post: {
+        summary: "Messages",
+        operationId: "readMessages",
+        parameters: [],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": { schema: { $ref: "#/components/schemas/MessagesRequest" } },
+          },
+        },
+        responses: {
+          "200": {
+            description: "Successful Response",
+            content: { "application/json": { schema: {} } },
+          },
+          "422": {
+            description: "Validation Error",
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/HTTPValidationError" } },
+            },
+          },
+        },
+        security: [{ internalBearer: [] }],
+      },
+    },
+    "/media": {
+      post: {
+        summary: "Media",
+        operationId: "retrievePhoto",
+        parameters: [],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": { schema: { $ref: "#/components/schemas/MediaRequest" } },
+          },
+        },
+        responses: {
+          "200": {
+            description: "Successful Response",
+            content: { "application/json": { schema: {} } },
+          },
+          "422": {
+            description: "Validation Error",
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/HTTPValidationError" } },
+            },
+          },
+        },
+        security: [{ internalBearer: [] }],
+      },
+    },
+  },
+  components: {
+    schemas: {
+      ChannelRequest: {
+        properties: { channel: { type: "string", title: "Channel" } },
+        type: "object",
+        required: ["channel"],
+        title: "ChannelRequest",
+      },
+      HTTPValidationError: {
+        properties: {
+          detail: {
+            items: { $ref: "#/components/schemas/ValidationError" },
+            type: "array",
+            title: "Detail",
+          },
+        },
+        type: "object",
+        title: "HTTPValidationError",
+      },
+      MediaRequest: {
+        properties: {
+          channel: { type: "string", title: "Channel" },
+          messageId: { type: "integer", exclusiveMinimum: 0.0, title: "Messageid" },
+        },
+        type: "object",
+        required: ["channel", "messageId"],
+        title: "MediaRequest",
+      },
+      MessagesRequest: {
+        properties: {
+          channel: { type: "string", title: "Channel" },
+          ids: {
+            anyOf: [{ items: { type: "integer" }, type: "array", maxItems: 100 }, { type: "null" }],
+            title: "Ids",
+          },
+          limit: { type: "integer", maximum: 100.0, minimum: 1.0, title: "Limit", default: 30 },
+        },
+        type: "object",
+        required: ["channel"],
+        title: "MessagesRequest",
+      },
+      ValidationError: {
+        properties: {
+          loc: {
+            items: { anyOf: [{ type: "string" }, { type: "integer" }] },
+            type: "array",
+            title: "Location",
+          },
+          msg: { type: "string", title: "Message" },
+          type: { type: "string", title: "Error Type" },
+          input: { title: "Input" },
+          ctx: { type: "object", title: "Context" },
+        },
+        type: "object",
+        required: ["loc", "msg", "type"],
+        title: "ValidationError",
+      },
+    },
+    securitySchemes: { internalBearer: { type: "http", scheme: "bearer" } },
+  },
+} as const;

@@ -3,20 +3,11 @@
     "target": "ES2022",
     "module": "esnext",
     "moduleResolution": "bundler",
-    "types": [
-      "node",
-      "eve/workflow-modules",
-      "bun"
-    ],
+    "types": ["node", "eve/workflow-modules", "bun"],
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": [
-    "agent/**/*.ts",
-    "evals/**/*.ts",
-    "scripts/**/*.ts",
-    "tests/**/*.ts"
-  ]
+  "include": ["agent/**/*.ts", "evals/**/*.ts", "scripts/**/*.ts", "tests/**/*.ts"]
 }
