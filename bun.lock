@@ -35,6 +35,9 @@
       },
     },
   },
+  "patchedDependencies": {
+    "eve@0.70.0": "patches/eve@0.70.0.patch",
+  },
   "packages": {
     "@agent-browser/eve": ["@agent-browser/eve@0.38.2", "", { "dependencies": { "@agent-browser/sandbox": "^0.38.2", "zod": "4.4.3" }, "peerDependencies": { "eve": ">=0.57.0" } }, "sha512-oErFV27J3HoDV75qbNc5pz0335tCkBTmPyvAiNQa5otiQQXW4SyJsX+XjZkz6UF6QxBgjl9sMotfWMsCcYKNKg=="],
 

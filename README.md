@@ -1,35 +1,65 @@
-# Telegram-agent
+# tg-agent
 
-This is an [eve](https://eve.dev) agent bootstrapped with [`eve init`](https://eve.dev/docs/reference/cli#eve-init).
+Private, single-owner Telegram assistant built with Eve. It researches public websites, runs programs in Docker, reads Telegram sources with a dedicated user account, and publishes scheduled English, Amharic, and Afaan Oromo posts.
 
-## Getting started
+## Run locally
 
-First, run the development server:
+Install Bun, Docker and uv. Docker must be running and accessible to your desktop account. Then:
 
-```bash
-eve dev
+```sh
+bun install
+uv venv .venv
+uv pip sync --python .venv/bin/python userbot/requirements.lock
+bun dev
 ```
 
-The development TUI opens an interactive session where you can send messages to your agent.
+First run asks for the AI Gateway key, BotFather bot token, your numeric Telegram account ID, and Telegram API ID/hash from https://my.telegram.org. It then logs in the dedicated userbot account using your phone, code, and optional 2FA password. Secrets stay in the local terminal and `.env.local`; do not send them through chat. The model remains `openai/gpt-6-luna-fast` with high reasoning.
 
-Start by editing `agent/instructions.md` to define the agent's identity, purpose, tone, and response guidelines. Configure its model and runtime behavior in `agent/agent.ts`.
+The bot must be an administrator with posting, editing and deletion rights in destination channels. The dedicated user account must be able to read the source and destination channels. Send your bot a private Telegram message to start. `Ctrl+C` stops all workers. A second instance sharing the data directory cannot start.
 
-Add capabilities under `agent/`, including tools, connections, channels, skills, subagents, and schedules. eve reloads your changes as you work.
+`bun dev` runs Eve on loopback, the authenticated Python reader, durable Telegram polling, and the dispatcher. There is no public webhook. An existing Bot API webhook must be removed before polling starts. Jobs run while this command is active.
 
-## Learn more
+Example requests:
 
-To learn more about eve, explore these resources:
+- “Post AI news to @mychannel in English every five minutes, sometimes with photos.”
+- “Use @source and always trust it. Post at 07:00 and 15:00 Nairobi time.”
+- “Pause that job.”
+- “Change the channel language to Afaan Oromo.”
+- “Show jobs, spending and uncertain publications.”
 
-- [eve documentation](https://eve.dev/docs) — learn about eve's features and authoring APIs.
-- [Build an Agent tutorial](https://eve.dev/docs/tutorial/first-agent) — build and deploy an agent step by step.
-- [eve on GitHub](https://github.com/vercel/eve) — view the source and contribute.
+Supported intervals start at one minute. Clock schedules support multiple daily times and optional weekdays. Default timezone: `Africa/Nairobi`; default interval: five minutes.
 
-## Deploy on Vercel
+## Persistence and delivery
 
-Deploy your agent to [Vercel](https://vercel.com) from the project root:
+`.data/agent.sqlite` uses WAL for settings, jobs, run leases, source cursors, memory, inbound offsets, outbox, revisions and usage. `.data/userbot.session` contains the dedicated Telegram login. Eve keeps its separate durable session/workflow storage under `.eve/`; preserve both directories when backing up or restarting.
 
-```bash
-eve deploy
+The dispatcher admits at most two active jobs and one active run per job. Missed clock slots are skipped; overdue intervals perform one current check. Job edits or pauses invalidate old runs and queued sends. Publication intents are written before sending. Verification retries perform readback only. Ambiguous sends are reconciled against destination history and remain uncertain if delivery cannot be established; they are never blindly resent.
+
+Source changes queue correction reviews. Always-trusted source policies bypass independent corroboration, but source text cannot grant permissions. Scheduled jobs cannot modify settings or operate other destinations. Specialists have read-only integrations and no publishing tools. Real media needs reuse permission and credit; protected Telegram photos are rejected and text is the fallback.
+
+Recorded provider model costs, including specialist calls and retried priced calls, count toward the default $2 daily limit. New background calls pause when recorded spend reaches the cap; owner conversation remains available. In-flight calls can cross the cap because pricing arrives after completion. Search/infrastructure fees are separate. Unpriced background steps pause autonomous work for inspection. Cost attribution for provider failures and compaction requires live Gateway validation; do not treat recorded spend as a billing invoice.
+
+## Checks
+
+```sh
+bun run format:check
+bun run typecheck
+bun run test
+bun run test:python
+bun run format:python:check
+bun run doctor
+bun run build
+bun run eval
 ```
 
-`eve deploy` links a Vercel project if needed and deploys the agent to production. See the [eve deployment documentation](https://eve.dev/docs/guides/deployment/vercel) for authentication, environment variables, and deployment options.
+Use `bun run test`, because the implementation uses Node 24's SQLite module; Bun's own test runner does not provide it. Tests cover persistence, scheduler leases, ownership, source instruction restrictions in executors, duplicate stories, photos/albums, accepted-but-lost send responses, readback retries, paused sends, revisions and budget handling. Eve evals exercise natural-language job control with a real model and require an AI Gateway key.
+
+`bun run test:telegram` requires a running app, owner credentials, a logged-in userbot, and explicitly configured disposable channels. Set `TG_TEST_CHANNELS` to JSON with `en`, `am`, and `om` channel references, plus `TG_TEST_PHOTO_URL`, `TG_TEST_PHOTO_CREDIT`, and `TG_TEST_SOURCE_URL` for a photo you may reuse. It sends marked fixtures and verifies text, photos, albums, edits, corrections and deletions. Its ledger remains under `.data/acceptance/` for cleanup if a check fails. Confirm text, photos, albums, edits, deletions and translations in each language before relying on autonomous posting. Language skills guide generation; they do not substitute for native-speaker review.
+
+## Compatibility
+
+Eve is pinned to 0.70.0. The official `@agent-browser/eve` 0.38.2 registry package was built against an older unsupported tool contract. `integrations/agent-browser` preserves its published implementation and rebuilds it with the current compiler during `bun install`. Docker images bake in the browser and Chromium once.
+
+`patches/eve@0.70.0.patch` adds shared SELinux labeling to Eve's read-only Docker resource mount, required on Fedora. It affects only generated sandbox resources. Bun uses a hoisted dependency layout so the patched framework resolves its runtime dependencies. Run `bun run format` after changes.
+
+This release is local and single-owner. Deployment, customer accounts, signed-in website browsing, and second-level schedules are outside its scope.

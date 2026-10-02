@@ -97,6 +97,28 @@ async def on_deleted(event):
             pass
 
 
+async def scan(entry):
+    peer = await entity(entry["source"])
+    source_map[utils.get_peer_id(peer)] = entry["source"]
+    recent = await rpc(client.get_messages(peer, limit=50))
+    await ingest(entry["source"], [serialize(m) for m in recent if m])
+    if entry.get("trackedIds"):
+        tracked = await rpc(client.get_messages(peer, ids=entry["trackedIds"]))
+        await ingest(
+            entry["source"],
+            [
+                serialize(m) if m else {"id": mid, "text": "", "deleted": True}
+                for mid, m in zip(entry["trackedIds"], tracked)
+            ],
+        )
+    if entry["cursor"]:
+        async for message in client.iter_messages(
+            peer, min_id=entry["cursor"], reverse=True, limit=500
+        ):
+            await ingest(entry["source"], [serialize(message)])
+    source_health[entry["source"]] = "ready"
+
+
 async def collect():
     while True:
         delay = 60
@@ -108,41 +130,27 @@ async def collect():
                 )
                 response.raise_for_status()
                 sources = response.json()["sources"]
+            enabled = {entry["source"] for entry in sources}
+            for chat_id, source in list(source_map.items()):
+                if source not in enabled:
+                    del source_map[chat_id]
             for entry in sources:
-                peer = await entity(entry["source"])
-                source_map[utils.get_peer_id(peer)] = entry["source"]
-                # New posts plus a recent history window catch edits after outages.
-                recent = await rpc(client.get_messages(peer, limit=50))
-                await ingest(entry["source"], [serialize(m) for m in recent if m])
-                if entry.get("trackedIds"):
-                    tracked = await rpc(
-                        client.get_messages(peer, ids=entry["trackedIds"])
-                    )
-                    await ingest(
-                        entry["source"],
-                        [
-                            serialize(m)
-                            if m
-                            else {"id": mid, "text": "", "deleted": True}
-                            for mid, m in zip(entry["trackedIds"], tracked)
-                        ],
-                    )
-                source_health[entry["source"]] = "ready"
-                cursor = entry["cursor"]
-                if cursor:
-                    async for message in client.iter_messages(
-                        peer, min_id=cursor, reverse=True, limit=500
-                    ):
-                        await ingest(entry["source"], [serialize(message)])
-        except HTTPException as exc:
-            if "entry" in locals():
-                source_health[entry["source"]] = "degraded"
-            if exc.status_code == 429:
-                delay = max(60, int(exc.headers.get("Retry-After", "60")))
+                try:
+                    await scan(entry)
+                except HTTPException as exc:
+                    source_health[entry["source"]] = "degraded"
+                    if exc.status_code == 429:
+                        delay = max(60, int(exc.headers.get("Retry-After", "60")))
+                        break  # Flood waits apply to the account, not just one source.
+                except errors.FloodWaitError as exc:
+                    source_health[entry["source"]] = "degraded"
+                    delay = max(60, exc.seconds)
+                    break
+                except Exception:
+                    source_health[entry["source"]] = "degraded"
+                    # One inaccessible source does not starve other channels.
         except Exception:
-            if "entry" in locals():
-                source_health[entry["source"]] = "degraded"
-            pass  # Health remains observable; next scan retries with preserved cursors.
+            source_health["dispatcher"] = "degraded"
         await asyncio.sleep(delay)
 
 

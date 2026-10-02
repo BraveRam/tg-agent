@@ -18,7 +18,12 @@
     "doctor": "bun scripts/doctor.ts",
     "build:browser": "cd integrations/agent-browser && ../../node_modules/node/bin/node ../../node_modules/eve/bin/eve.js extension build",
     "format": "prettier --write --ignore-unknown --no-error-on-unmatched-pattern agent scripts tests evals package.json tsconfig.json .prettierrc.json",
-    "format:check": "prettier --check --ignore-unknown --no-error-on-unmatched-pattern agent scripts tests evals package.json tsconfig.json .prettierrc.json"
+    "format:check": "prettier --check --ignore-unknown --no-error-on-unmatched-pattern agent scripts tests evals package.json tsconfig.json .prettierrc.json",
+    "postinstall": "bun run build:browser",
+    "test:python": ".venv/bin/python -m unittest userbot.test_app",
+    "test:telegram": "node_modules/node/bin/node --import tsx scripts/telegram-acceptance.ts",
+    "format:python": "uv tool run --from ruff==0.15.9 ruff format userbot",
+    "format:python:check": "uv tool run --from ruff==0.15.9 ruff format --check userbot"
   },
   "dependencies": {
     "@agent-browser/eve": "^0.38.2",
@@ -44,5 +49,8 @@
   "private": true,
   "workspaces": [
     "integrations/agent-browser"
-  ]
+  ],
+  "patchedDependencies": {
+    "eve@0.70.0": "patches/eve@0.70.0.patch"
+  }
 }

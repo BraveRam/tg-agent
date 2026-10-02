@@ -63,16 +63,12 @@ async function poll() {
         s.inboxState(row.update_id, "delivered");
         s.set("poll.health", "ready");
       } catch {
-        if (true) {
-          s.inboxState(row.update_id, "uncertain");
-          await notify(
-            "An owner message could not be delivered reliably. Please resend it if needed.",
-            `inbox:${row.update_id}`,
-          );
-        } else {
-          s.inboxState(row.update_id, "pending");
-          await wait(1000);
-        }
+        // A lost HTTP acknowledgment may hide an accepted turn; do not replay it.
+        s.inboxState(row.update_id, "uncertain");
+        await notify(
+          "An owner message could not be delivered reliably. Please resend it if needed.",
+          `inbox:${row.update_id}`,
+        );
       }
     }
   }

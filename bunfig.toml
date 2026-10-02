@@ -1,0 +1,3 @@
+[install]
+# Eve's patched package and local extension share the same runtime dependencies.
+linker = "hoisted"

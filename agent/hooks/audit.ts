@@ -8,8 +8,13 @@ export default defineHook({
     },
     "step.completed": (event, ctx) => {
       const cost = event.data.usage?.costUsd;
-      if (cost !== undefined) store().recordUsage(event.meta.id, cost);
-      else if (ctx.session.auth.current?.attributes?.runId) {
+      if (cost !== undefined) {
+        const priced = store().get(
+          `priced.step:${ctx.session.id}:${event.data.turnId}:${event.data.stepIndex}`,
+          false,
+        );
+        if (!priced) store().recordUsage(event.meta.id, cost);
+      } else if (ctx.session.auth.current?.attributes?.runId) {
         store().set("budget.unpriced", true);
         ctx.cancel();
       }
