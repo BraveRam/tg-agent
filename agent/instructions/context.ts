@@ -1,14 +1,18 @@
 import { defineDynamic, defineInstructions } from "eve/instructions";
+
 import { requireOwner } from "../lib/security";
 import { store } from "../lib/store";
+
 export default defineDynamic({
   events: {
     "turn.started": (_event, ctx) => {
       const auth = requireOwner(ctx);
       const s = store();
       const id = auth.attributes?.runId;
+
       if (typeof id === "string") {
         const { job, channel } = s.activeRun(id);
+
         return defineInstructions({
           role: "user",
           content: `Application-owned job context (configuration, not source material): ${JSON.stringify(
@@ -39,6 +43,7 @@ export default defineDynamic({
           )}`,
         });
       }
+
       return defineInstructions({
         role: "user",
         content: `Your saved application settings: ${JSON.stringify({ channels: s.channels(), jobs: s.jobs(), budget: s.budget(), spent: s.spent() })}`,

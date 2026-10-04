@@ -3,15 +3,20 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import { store } from "../agent/lib/store";
 import jobs from "../agent/tools/jobs";
 import memory from "../agent/memory/profile";
+
 const dir = mkdtempSync(join(tmpdir(), "tg-tools-"));
+
 process.env.TG_DATA_DIR = dir;
+
 const ctx: any = {
   session: { id: "test", auth: { current: { authenticator: "local-dev", attributes: {} } } },
   callId: "call-1",
 };
+
 test("job executor preserves twice-daily schedules and always-trusted sources on replay", async () => {
   const s = store();
   const c = s.saveChannel({
@@ -35,6 +40,7 @@ test("job executor preserves twice-daily schedules and always-trusted sources on
   };
   const a: any = await jobs.execute!(input, ctx),
     b: any = await jobs.execute!(input, ctx);
+
   assert.equal(a.id, b.id);
   assert.equal(s.jobs().length, 1);
   assert.deepEqual(s.job(a.id).schedule, input.settings.schedule);
@@ -42,10 +48,12 @@ test("job executor preserves twice-daily schedules and always-trusted sources on
   await jobs.execute!({ action: "pause", id: a.id }, { ...ctx, callId: "pause" });
   assert.equal(s.job(a.id).enabled, false);
 });
+
 test("memory is scoped and backend is configured", () => {
   assert.equal(memory.scope!({ session: { auth: { current: null } } } as any), null);
   assert.equal(memory.scope!(ctx), "owner");
 });
+
 test("source contents cannot authorize a scheduled job to mutate configuration", async () => {
   await assert.rejects(
     Promise.resolve().then(() =>
@@ -64,9 +72,11 @@ test("source contents cannot authorize a scheduled job to mutate configuration",
     ),
   );
 });
+
 test("model work concurrency is bounded and operational records survive reopening", () => {
   const s = store(),
     c = s.channels()[0];
+
   for (let i = 0; i < 4; i++)
     s.saveJob({
       channelId: c.id,
@@ -76,9 +86,11 @@ test("model work concurrency is bounded and operational records survive reopenin
       schedule: { kind: "interval", minutes: 1 },
       freshnessHours: 24,
     });
+
   s.claimDue(Date.now() + 60001);
   assert.equal(s.recoverRuns().length, 2);
 });
+
 process.on("exit", () => {
   store().close();
   rmSync(dir, { recursive: true, force: true });

@@ -2,16 +2,22 @@ import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+
 import { DateTime } from "luxon";
+
 import { config } from "./config";
 import { nextDue } from "./schedule";
 import type { Channel, Job, Run, Publication, Post } from "./types";
+
 let singleton: Store | undefined;
+
 export function store() {
   return (singleton ??= new Store(config().dataDir));
 }
+
 export class Store {
   readonly db: DatabaseSync;
+
   constructor(dir: string) {
     mkdirSync(dir, { recursive: true, mode: 0o700 });
     this.db = new DatabaseSync(join(dir, "agent.sqlite"));
@@ -29,69 +35,89 @@ export class Store {
  CREATE TABLE IF NOT EXISTS events(id TEXT PRIMARY KEY,type TEXT NOT NULL,data TEXT NOT NULL,created_at INTEGER NOT NULL);
  PRAGMA user_version=1;`);
   }
+
   close() {
     this.db.close();
   }
+
   transaction<T>(fn: () => T): T {
     this.db.exec("BEGIN IMMEDIATE");
+
     try {
       const v = fn();
+
       this.db.exec("COMMIT");
+
       return v;
     } catch (e) {
       this.db.exec("ROLLBACK");
       throw e;
     }
   }
+
   get<T>(key: string, fallback: T): T {
     const r = this.db.prepare("SELECT value FROM kv WHERE key=?").get(key) as
       | { value: string }
       | undefined;
+
     return r ? JSON.parse(r.value) : fallback;
   }
+
   set(key: string, value: unknown) {
     this.db
       .prepare("INSERT INTO kv VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
       .run(key, JSON.stringify(value));
   }
+
   event(type: string, data: unknown, id: string = randomUUID()) {
     this.db
       .prepare("INSERT OR IGNORE INTO events VALUES(?,?,?,?)")
       .run(id, type, JSON.stringify(data), Date.now());
   }
+
   channels(): Channel[] {
     return this.db
       .prepare("SELECT id,data FROM channels")
       .all()
       .map((r: any) => ({ ...JSON.parse(r.data), id: r.id }));
   }
+
   channel(id: string): Channel {
     const r = this.db
       .prepare("SELECT id,data FROM channels WHERE id=? OR chat_id=?")
       .get(id, id) as any;
+
     if (!r) throw new Error("Channel not registered");
+
     return { ...JSON.parse(r.data), id: r.id };
   }
+
   saveChannel(data: Omit<Channel, "id">): Channel {
     const prior = this.db
       .prepare("SELECT id FROM channels WHERE chat_id=?")
       .get(data.chatId) as any;
     const id = prior?.id ?? randomUUID();
+
     this.db
       .prepare(
         "INSERT INTO channels VALUES(?,?,?) ON CONFLICT(chat_id) DO UPDATE SET data=excluded.data",
       )
       .run(id, data.chatId, JSON.stringify(data));
+
     if (prior) this.db.prepare("UPDATE jobs SET version=version+1 WHERE channel_id=?").run(id);
+
     this.event("channel.saved", { id });
+
     return { ...data, id };
   }
+
   jobs(): Job[] {
     return this.db
       .prepare("SELECT * FROM jobs")
       .all()
       .map((r: any) => this.decodeJob(r));
   }
+
   private decodeJob(r: any): Job {
     return {
       ...JSON.parse(r.data),
@@ -101,31 +127,42 @@ export class Store {
       nextDue: r.next_due,
     };
   }
+
   job(id: string): Job {
     const r = this.db.prepare("SELECT * FROM jobs WHERE id=?").get(id);
+
     if (!r) throw new Error("Unknown job");
+
     return this.decodeJob(r);
   }
+
   saveJob(data: Omit<Job, "id" | "enabled" | "version" | "nextDue">, id?: string): Job {
     this.channel(data.channelId);
+
     const old = id ? this.job(id) : undefined;
     const key = id ?? randomUUID();
     const due = nextDue(data.schedule, Date.now());
+
     this.db
       .prepare(
         "INSERT INTO jobs VALUES(?,?,?,1,1,?) ON CONFLICT(id) DO UPDATE SET channel_id=excluded.channel_id,data=excluded.data,version=jobs.version+1,next_due=excluded.next_due",
       )
       .run(key, data.channelId, JSON.stringify(data), due);
     this.event("job.saved", { id: key });
+
     return this.job(key);
   }
+
   enableJob(id: string, enabled: boolean) {
     const j = this.job(id);
+
     this.db
       .prepare("UPDATE jobs SET enabled=?,version=version+1,next_due=? WHERE id=?")
       .run(+enabled, nextDue(j.schedule, Date.now()), id);
+
     return this.job(id);
   }
+
   cancelJob(id: string) {
     this.enableJob(id, false);
     this.db
@@ -133,8 +170,10 @@ export class Store {
         "UPDATE runs SET status='cancelled' WHERE job_id=? AND status IN ('claimed','running')",
       )
       .run(id);
+
     return this.job(id);
   }
+
   resetMissedCalendar(now = Date.now()) {
     for (const j of this.jobs())
       if (j.schedule.kind === "calendar" && j.nextDue < now)
@@ -142,9 +181,11 @@ export class Store {
           .prepare("UPDATE jobs SET next_due=? WHERE id=?")
           .run(nextDue(j.schedule, now), j.id);
   }
+
   claimDue(now = Date.now()): Run[] {
     return this.transaction(() => {
       const result: Run[] = [];
+
       for (const j of this.jobs()) {
         if (
           Number(
@@ -156,12 +197,17 @@ export class Store {
           ) >= 2
         )
           break;
+
         if (!j.enabled || j.nextDue > now) continue;
+
         const active = this.db
           .prepare("SELECT id FROM runs WHERE job_id=? AND status IN ('claimed','running')")
           .get(j.id);
+
         if (active) continue;
+
         const id = randomUUID();
+
         this.db
           .prepare("INSERT INTO runs VALUES(?,?,?,?,?,?,NULL)")
           .run(id, j.id, j.version, j.nextDue, "claimed", now + 600000);
@@ -170,12 +216,16 @@ export class Store {
           .run(nextDue(j.schedule, now), j.id);
         result.push(this.run(id));
       }
+
       return result;
     });
   }
+
   run(id: string): Run {
     const r = this.db.prepare("SELECT * FROM runs WHERE id=?").get(id) as any;
+
     if (!r) throw new Error("Unknown run");
+
     return {
       id: r.id,
       jobId: r.job_id,
@@ -186,13 +236,17 @@ export class Store {
       sessionId: r.session_id,
     };
   }
+
   activeRun(id: string) {
     const r = this.run(id),
       j = this.job(r.jobId);
+
     if (!j.enabled || j.version !== r.version || !["claimed", "running"].includes(r.status))
       throw new Error("Job paused, changed, or run inactive");
+
     return { run: r, job: j, channel: this.channel(j.channelId) };
   }
+
   runState(id: string, status: string, sessionId?: string) {
     this.db
       .prepare(
@@ -200,27 +254,35 @@ export class Store {
       )
       .run(status, sessionId ?? null, Date.now() + 600000, id);
   }
+
   recoverRuns() {
     return this.db
       .prepare("SELECT id FROM runs WHERE status IN ('claimed','running')")
       .all()
       .map((r: any) => this.run(r.id));
   }
+
   enqueue(post: Post, storyKey: string, runId: string | null): Publication {
     const id = randomUUID();
+
     this.db
       .prepare(
         "INSERT OR IGNORE INTO publications(id,channel_id,run_id,story_key,data,status) VALUES(?,?,?,?,?,'queued')",
       )
       .run(id, post.channelId, runId, storyKey, JSON.stringify({ ...post, messageIds: [] }));
+
     const r = this.db
       .prepare("SELECT id FROM publications WHERE channel_id=? AND story_key=?")
       .get(post.channelId, storyKey) as any;
+
     return this.publication(r.id);
   }
+
   publication(id: string): Publication {
     const r = this.db.prepare("SELECT * FROM publications WHERE id=?").get(id) as any;
+
     if (!r) throw new Error("Unknown publication");
+
     return {
       ...JSON.parse(r.data),
       id: r.id,
@@ -235,6 +297,7 @@ export class Store {
       error: r.error,
     };
   }
+
   publications(channelId?: string): Publication[] {
     return this.db
       .prepare(
@@ -243,6 +306,7 @@ export class Store {
       .all(channelId ?? null, channelId ?? null)
       .map((r: any) => this.publication(r.id));
   }
+
   pendingPublications(): Publication[] {
     return this.db
       .prepare(
@@ -251,24 +315,33 @@ export class Store {
       .all()
       .map((r: any) => this.publication(r.id));
   }
+
   operation<T>(key: string, fn: () => T): T {
     return this.transaction(() => {
       const prior = this.get<{ result: T } | null>("operation:" + key, null);
+
       if (prior) return prior.result;
+
       const result = fn();
+
       this.set("operation:" + key, { result });
+
       return result;
     });
   }
+
   updatePublication(id: string, changes: Partial<Publication>) {
     const p = { ...this.publication(id), ...changes };
+
     this.db
       .prepare(
         "UPDATE publications SET data=?,status=?,sent_at=?,operation=?,attempts=?,retry_at=?,error=? WHERE id=?",
       )
       .run(JSON.stringify(p), p.status, p.sentAt, p.operation, p.attempts, p.retryAt, p.error, id);
+
     return p;
   }
+
   claimPublication(id: string): boolean {
     return (
       this.db
@@ -278,19 +351,24 @@ export class Store {
         .run(id).changes === 1
     );
   }
+
   revise(id: string, changes: Partial<Publication>) {
     const p = this.publication(id);
+
     this.db
       .prepare("INSERT INTO revisions VALUES(?,?,?,?)")
       .run(randomUUID(), id, JSON.stringify(p), Date.now());
+
     return this.updatePublication(id, changes);
   }
+
   ingest(updates: { update_id: number }[]) {
     this.transaction(() => {
       for (const u of updates)
         this.db
           .prepare("INSERT OR IGNORE INTO inbox(update_id,payload) VALUES(?,?)")
           .run(u.update_id, JSON.stringify(u));
+
       if (updates.length)
         this.set(
           "poll.offset",
@@ -298,6 +376,7 @@ export class Store {
         );
     });
   }
+
   inbox() {
     return this.db
       .prepare(
@@ -305,11 +384,13 @@ export class Store {
       )
       .all() as { update_id: number; payload: string; attempts: number }[];
   }
+
   inboxState(id: number, status: string) {
     this.db
       .prepare("UPDATE inbox SET status=?,attempts=attempts+1 WHERE update_id=?")
       .run(status, id);
   }
+
   source(source: string, messages: any[]) {
     this.transaction(() => {
       for (const m of messages)
@@ -318,25 +399,30 @@ export class Store {
             "INSERT INTO source_messages VALUES(?,?,?,?) ON CONFLICT(source,message_id) DO UPDATE SET data=excluded.data,updated_at=excluded.updated_at",
           )
           .run(source, m.id, JSON.stringify(m), Date.now());
+
       this.set(
         "source.cursor:" + source,
         Math.max(this.get("source.cursor:" + source, 0), ...messages.map((m) => m.id)),
       );
     });
   }
+
   sourceMessages(source: string) {
     return this.db
       .prepare("SELECT data FROM source_messages WHERE source=? ORDER BY message_id DESC LIMIT 50")
       .all(source)
       .map((r: any) => JSON.parse(r.data));
   }
+
   day(now = Date.now()) {
     return DateTime.fromMillis(now, { zone: config().timezone }).toISODate()!;
   }
+
   recordUsage(key: string, cost: number) {
     if (Number.isFinite(cost) && cost >= 0)
       this.db.prepare("INSERT OR IGNORE INTO usage VALUES(?,?,?)").run(key, this.day(), cost);
   }
+
   spent() {
     return Number(
       (
@@ -346,9 +432,11 @@ export class Store {
       ).total,
     );
   }
+
   budget() {
     return this.get("budget.daily", config().dailyBudget);
   }
+
   budgetAvailable() {
     return !this.get("budget.unpriced", false) && this.spent() < this.budget();
   }

@@ -1,8 +1,10 @@
 import { z } from "zod";
 import { DateTime } from "luxon";
+
 export const timezone = z
   .string()
   .refine((v) => DateTime.now().setZone(v).isValid, "Invalid IANA timezone");
+
 export const scheduleSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("interval"), minutes: z.number().int().min(1).max(525600) }),
   z.object({
@@ -15,11 +17,13 @@ export const scheduleSchema = z.discriminatedUnion("kind", [
     timezone,
   }),
 ]);
+
 export const sourceSchema = z.object({
   kind: z.enum(["telegram", "web"]),
   reference: z.string().min(1),
   trust: z.enum(["verify", "always"]).default("verify"),
 });
+
 export const channelSchema = z.object({
   chatId: z.string().regex(/^-?\d+$/),
   name: z.string().min(1),
@@ -28,6 +32,7 @@ export const channelSchema = z.object({
   timezone: timezone.default("Africa/Nairobi"),
   images: z.enum(["auto", "never", "prefer"]).default("auto"),
 });
+
 export const jobInputSchema = z.object({
   channelId: z.string(),
   name: z.string().min(1),
@@ -36,14 +41,18 @@ export const jobInputSchema = z.object({
   schedule: scheduleSchema.default({ kind: "interval", minutes: 5 }),
   freshnessHours: z.number().min(1).max(168).default(24),
 });
+
 export type Schedule = z.infer<typeof scheduleSchema>;
+
 export type Channel = z.infer<typeof channelSchema> & { id: string };
+
 export type Job = z.infer<typeof jobInputSchema> & {
   id: string;
   enabled: boolean;
   version: number;
   nextDue: number;
 };
+
 export type Run = {
   id: string;
   jobId: string;
@@ -53,12 +62,14 @@ export type Run = {
   sessionId: string | null;
   due: number;
 };
+
 export type Evidence = {
   url: string;
   claim: string;
   sourceMessageId?: number;
   sourceChatId?: string;
 };
+
 export type Media = {
   url?: string;
   sourceChatId?: string;
@@ -66,6 +77,7 @@ export type Media = {
   credit: string;
   reuseAllowed: boolean;
 };
+
 export type Post = {
   channelId: string;
   headline: string;
@@ -73,6 +85,7 @@ export type Post = {
   evidence: Evidence[];
   media: Media[];
 };
+
 export type Publication = {
   id: string;
   channelId: string;

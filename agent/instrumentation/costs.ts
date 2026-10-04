@@ -1,4 +1,5 @@
 import { defineInstrumentation } from "eve/instrumentation";
+
 import { store } from "../lib/store";
 
 // Provider calls include retries and specialist calls; protocol step totals do not.
@@ -9,10 +10,12 @@ export default defineInstrumentation({
       const s = store();
       const { sessionId, turnId, stepIndex } = event.scope;
       const cost = event.usage.costUsd;
+
       if (cost !== undefined) {
         s.recordUsage(event.idempotencyKey, cost);
         s.set(`priced.step:${sessionId}:${turnId}:${stepIndex}`, true);
       }
+
       s.event(
         "model.call",
         {

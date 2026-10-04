@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+
 export const config = () => ({
   dataDir: resolve(process.env.TG_DATA_DIR ?? ".data"),
   ownerId: process.env.TELEGRAM_OWNER_ID ?? "",
