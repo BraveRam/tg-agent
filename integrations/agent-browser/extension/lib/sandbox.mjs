@@ -111,7 +111,7 @@ async function installAgentBrowser(sandbox, options = {}) {
 async function runAgentBrowser(ctx, args, options = {}) {
 	const sandbox = await ctx.getSandbox();
 	if (sandbox === null) throw new Error("agent-browser requires an Eve sandbox. Configure agent/sandbox.ts first.");
-	const session = options.session ?? defaultSessionName(options.sessionPrefix ?? "eve", sandbox.id);
+	const session = options.session ?? defaultSessionName(options.sessionPrefix ?? "eve", ctx.session.id);
 	const command = buildAgentBrowserCommand(args, {
 		...options,
 		session

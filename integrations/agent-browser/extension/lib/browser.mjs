@@ -24,11 +24,11 @@ async function withDeadline(work, label) {
 }
 async function runBrowser(ctx, args) {
 	const sandbox = await requireSandbox(ctx);
-	await ensureInstalled(sandbox, ctx.abortSignal);
+	await ensureInstalled(sandbox, ctx.session.id, ctx.abortSignal);
 	const config = extension_default.config;
 	const command = buildAgentBrowserCommand([...args, ...configArgs()], {
 		binary: config.binary,
-		session: config.session ?? defaultSessionName(config.sessionPrefix, sandbox.id)
+		session: config.session ?? defaultSessionName(config.sessionPrefix, ctx.session.id)
 	});
 	const raw = await withDeadline(sandbox.run({
 		abortSignal: ctx.abortSignal,
@@ -50,13 +50,13 @@ async function requireSandbox(ctx) {
 	if (sandbox === null || sandbox === void 0) throw new Error("The browser tools require an eve sandbox. Configure agent/sandbox.ts in the consuming agent.");
 	return sandbox;
 }
-async function ensureInstalled(sandbox, abortSignal) {
+async function ensureInstalled(sandbox, sessionId, abortSignal) {
 	if (!extension_default.config.autoInstall) return;
-	let pending = pendingInstalls.get(sandbox.id);
+	let pending = pendingInstalls.get(sessionId);
 	if (pending === void 0) {
 		pending = installIfMissing(sandbox, abortSignal);
-		pendingInstalls.set(sandbox.id, pending);
-		pending.catch(() => pendingInstalls.delete(sandbox.id));
+		pendingInstalls.set(sessionId, pending);
+		pending.catch(() => pendingInstalls.delete(sessionId));
 	}
 	await pending;
 }

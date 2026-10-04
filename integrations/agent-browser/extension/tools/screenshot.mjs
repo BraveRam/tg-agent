@@ -34,12 +34,12 @@ var screenshot_default = defineTool({
 			type: "json",
 			value: rest
 		};
-		const { path: _path, ...visible } = rest;
+		const visible = rest;
 		return {
 			type: "json",
 			value: {
 				...visible,
-				screenshot: "Captured and already displayed to the user."
+				screenshot: "Captured in the sandbox. Use send_image with the returned path when the owner requests the screenshot in Telegram."
 			}
 		};
 	}

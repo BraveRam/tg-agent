@@ -27,7 +27,7 @@ export async function bot<T = any>(
 
     const filename = value.slice(9);
 
-    if (!/^[0-9a-f-]{36}\.jpg$/.test(filename)) throw new Error("Invalid media handle");
+    if (!/^[0-9a-f-]{36}\.(jpg|png)$/.test(filename)) throw new Error("Invalid media handle");
 
     const bytes = await readFile(join(config().dataDir, "media", filename));
 
@@ -35,7 +35,9 @@ export async function bot<T = any>(
 
     const key = "photo" + Object.keys(uploads).length;
 
-    uploads[key] = new Blob([bytes], { type: "image/jpeg" });
+    uploads[key] = new Blob([bytes], {
+      type: filename.endsWith(".png") ? "image/png" : "image/jpeg",
+    });
 
     return "attach://" + key;
   }
@@ -55,7 +57,8 @@ export async function bot<T = any>(
       if (value !== undefined)
         form.set(key, typeof value === "string" ? value : JSON.stringify(value));
 
-    for (const [key, value] of Object.entries(uploads)) form.set(key, value, key + ".jpg");
+    for (const [key, value] of Object.entries(uploads))
+      form.set(key, value, key + (value.type === "image/png" ? ".png" : ".jpg"));
 
     requestBody = form;
     headers = {};
