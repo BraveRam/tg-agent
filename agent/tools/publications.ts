@@ -29,7 +29,7 @@ const media = z.object({
 export default defineTool({
   availableInSubagents: false,
   description:
-    "List prior posts, publish sourced text/photos/albums, verify/reconcile deliveries, or edit/delete a recorded post. For autonomous corrections cite the evidence in reason. Never resend an uncertain post. Media requires permission and attribution. Auto posts are restricted to the current job destination.",
+    "List prior posts (newest first; paginate with limit/offset), publish sourced text/photos/albums, verify/reconcile deliveries, or edit/delete a recorded post. For autonomous corrections cite the evidence in reason. Never resend an uncertain post. Media requires permission and attribution. Auto posts are restricted to the current job destination.",
   inputSchema: z.object({
     action: z.enum(["list", "publish", "verify", "reconcile", "edit", "delete"]),
     channelId: z.string().optional(),
@@ -39,6 +39,8 @@ export default defineTool({
     evidence: z.array(evidence).optional(),
     media: z.array(media).max(10).optional(),
     reason: z.string().optional(),
+    limit: z.number().int().min(1).max(100).optional(),
+    offset: z.number().int().nonnegative().optional(),
   }),
 
   async execute(input, ctx) {
@@ -50,9 +52,9 @@ export default defineTool({
     if (rid) assertRun(ctx);
 
     if (input.action === "list") {
-      if (rid) return s.publications(s.activeRun(rid).channel.id);
+      if (rid) return s.publications(s.activeRun(rid).channel.id, input.limit ?? 100, input.offset);
 
-      return s.publications(input.channelId);
+      return s.publications(input.channelId, input.limit ?? 100, input.offset);
     }
 
     if (input.action === "publish") {

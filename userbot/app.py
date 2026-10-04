@@ -66,12 +66,15 @@ def serialize(message):
     }
 
 
-async def ingest(source, messages):
+async def ingest(source, messages, cursor=None):
+    body = {"source": source, "messages": messages}
+    if cursor is not None:
+        body["cursor"] = cursor
     async with httpx.AsyncClient(timeout=30) as http:
         response = await http.post(
             EVE_URL + "/internal/sources",
             headers={"Authorization": "Bearer " + TOKEN},
-            json={"source": source, "messages": messages},
+            json=body,
         )
         response.raise_for_status()
 
@@ -100,22 +103,40 @@ async def on_deleted(event):
 async def scan(entry):
     peer = await entity(entry["source"])
     source_map[utils.get_peer_id(peer)] = entry["source"]
+    if entry["cursor"]:
+        batch = []
+        async for message in client.iter_messages(
+            peer, min_id=entry["cursor"], reverse=True, limit=500
+        ):
+            batch.append(serialize(message))
+            if len(batch) == 100:
+                await ingest(entry["source"], batch, cursor=batch[-1]["id"])
+                batch = []
+        if batch:
+            await ingest(entry["source"], batch, cursor=batch[-1]["id"])
+
     recent = await rpc(client.get_messages(peer, limit=50))
-    await ingest(entry["source"], [serialize(m) for m in recent if m])
-    if entry.get("trackedIds"):
-        tracked = await rpc(client.get_messages(peer, ids=entry["trackedIds"]))
+    recent = [serialize(m) for m in recent if m]
+    # Bootstrap a newly configured source with its recent history. Subsequent
+    # refreshes detect edits but cannot skip an unfinished ordered catch-up.
+    await ingest(
+        entry["source"],
+        recent,
+        cursor=max((m["id"] for m in recent), default=0)
+        if not entry["cursor"]
+        else None,
+    )
+    tracked_ids = list(dict.fromkeys(entry.get("trackedIds", [])))
+    for start in range(0, len(tracked_ids), 100):
+        ids = tracked_ids[start : start + 100]
+        tracked = await rpc(client.get_messages(peer, ids=ids))
         await ingest(
             entry["source"],
             [
                 serialize(m) if m else {"id": mid, "text": "", "deleted": True}
-                for mid, m in zip(entry["trackedIds"], tracked)
+                for mid, m in zip(ids, tracked)
             ],
         )
-    if entry["cursor"]:
-        async for message in client.iter_messages(
-            peer, min_id=entry["cursor"], reverse=True, limit=500
-        ):
-            await ingest(entry["source"], [serialize(message)])
     source_health[entry["source"]] = "ready"
 
 

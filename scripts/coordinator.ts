@@ -93,33 +93,7 @@ async function poll() {
 }
 
 async function correctionRuns() {
-  for (const j of s.jobs()) {
-    if (!j.enabled || !s.get("correction.pending:" + j.id, false)) continue;
-
-    s.transaction(() => {
-      if (
-        Number(
-          (
-            s.db
-              .prepare("SELECT COUNT(*) AS n FROM runs WHERE status IN ('claimed','running')")
-              .get() as any
-          ).n,
-        ) >= 2 ||
-        s.db
-          .prepare("SELECT id FROM runs WHERE job_id=? AND status IN ('claimed','running')")
-          .get(j.id)
-      )
-        return;
-
-      const id = crypto.randomUUID();
-
-      s.db
-        .prepare("INSERT INTO runs VALUES(?,?,?,?,?,?,NULL)")
-        .run(id, j.id, j.version, Date.now(), "claimed", Date.now() + 600000);
-      s.set("run.mode:" + id, "correction");
-      s.set("correction.pending:" + j.id, false);
-    });
-  }
+  for (const j of s.jobs()) s.claimCorrection(j.id);
 }
 
 async function dispatch() {

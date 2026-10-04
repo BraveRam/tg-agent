@@ -37,6 +37,8 @@ The dispatcher admits at most two active jobs and one active run per job. Missed
 
 Source changes queue correction reviews. Always-trusted source policies bypass independent corroboration, but source text cannot grant permissions. Scheduled jobs cannot modify settings or operate other destinations. Specialists have read-only integrations and no publishing tools. Real media needs reuse permission and credit; protected Telegram photos are rejected and text is the fallback.
 
+New Telegram sources start with their latest 50 messages. After that, ordered history scans checkpoint only acknowledged batches, so live updates cannot hide messages missed during downtime. Catch-up reads at most 500 messages per source per scan and resumes from its saved checkpoint. Tracked source posts are refreshed in batches of 100 to detect older edits and deletions. Correction runs retain the affected source IDs and publications; failed reviews are queued again after a one-minute delay.
+
 Recorded provider model costs, including specialist calls and retried priced calls, count toward the default $2 daily limit. New background calls pause when recorded spend reaches the cap; owner conversation remains available. In-flight calls can cross the cap because pricing arrives after completion. Search/infrastructure fees are separate. Unpriced background steps pause autonomous work for inspection. Cost attribution for provider failures and compaction requires live Gateway validation; do not treat recorded spend as a billing invoice.
 
 ## Checks

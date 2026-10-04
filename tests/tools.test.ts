@@ -7,6 +7,8 @@ import { join } from "node:path";
 import { store } from "../agent/lib/store";
 import jobs from "../agent/tools/jobs";
 import memory from "../agent/memory/profile";
+import context from "../agent/instructions/context";
+import publications from "../agent/tools/publications";
 
 const dir = mkdtempSync(join(tmpdir(), "tg-tools-"));
 
@@ -89,6 +91,79 @@ test("model work concurrency is bounded and operational records survive reopenin
 
   s.claimDue(Date.now() + 60001);
   assert.equal(s.recoverRuns().length, 2);
+});
+
+test("correction context and publication paging retain posts outside the recent history window", async () => {
+  const s = store();
+
+  for (const run of s.recoverRuns()) s.runState(run.id, "completed");
+
+  const channel = s.saveChannel({
+    chatId: "-1003",
+    name: "Corrections",
+    language: "en",
+    style: "Brief",
+    timezone: "Africa/Nairobi",
+    images: "never",
+  });
+  const job = s.saveJob({
+    channelId: channel.id,
+    name: "Corrections",
+    task: "AI news",
+    freshnessHours: 24,
+    sources: [{ kind: "telegram", reference: "@oldsource", trust: "always" }],
+    schedule: { kind: "interval", minutes: 5 },
+  });
+  const records = Array.from({ length: 125 }, (_, i) =>
+    s.enqueue(
+      {
+        channelId: channel.id,
+        headline: "Story " + i,
+        text: "Published story",
+        evidence: [
+          {
+            url: `https://t.me/oldsource/${i + 1}`,
+            claim: "Source report",
+            sourceMessageId: i + 1,
+            sourceChatId: "@oldsource",
+          },
+        ],
+        media: [],
+      },
+      "correctionstory:" + i,
+      null,
+    ),
+  );
+
+  s.source("@oldsource", [{ id: 1, text: "Original report" }], 1);
+  s.source("@oldsource", [{ id: 1, text: "Retracted report" }]);
+  s.source(
+    "@oldsource",
+    Array.from({ length: 60 }, (_, i) => ({ id: i + 1000, text: "Recent report" })),
+  );
+
+  const run = s.claimCorrection(job.id)!;
+  const scoped = {
+    ...ctx,
+    session: {
+      ...ctx.session,
+      auth: { current: { authenticator: "local-dev", attributes: { runId: run.id } } },
+    },
+  };
+  const definition = (context as any).events["turn.started"]({}, scoped);
+  const saved = JSON.parse(definition.content.slice(definition.content.indexOf("{")));
+
+  assert.ok(saved.previousPosts.some((p: any) => p.id === records[0].id));
+  assert.equal(saved.correctionEvidence[0].messages[0].text, "Retracted report");
+
+  const page = (await publications.execute!(
+    { action: "list", channelId: channel.id, limit: 5, offset: 120 },
+    ctx,
+  )) as any[];
+
+  assert.equal(page.length, 5);
+  assert.equal(page.at(-1).id, records[0].id);
+  s.runState(run.id, "completed");
 });
 
 process.on("exit", () => {

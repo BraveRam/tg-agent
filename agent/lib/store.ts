@@ -11,6 +11,8 @@ import type { Channel, Job, Run, Publication, Post } from "./types";
 
 let singleton: Store | undefined;
 
+export type SourceChange = { source: string; messageId: number };
+
 export function store() {
   return (singleton ??= new Store(config().dataDir));
 }
@@ -221,6 +223,37 @@ export class Store {
     });
   }
 
+  claimCorrection(jobId: string, now = Date.now()): Run | null {
+    return this.transaction(() => {
+      const job = this.job(jobId);
+      const active = this.recoverRuns();
+
+      if (
+        !job.enabled ||
+        !this.get("correction.pending:" + jobId, false) ||
+        this.get("correction.retryAt:" + jobId, 0) > now ||
+        active.length >= 2 ||
+        active.some((run) => run.jobId === jobId)
+      )
+        return null;
+
+      const id = randomUUID();
+
+      this.db
+        .prepare("INSERT INTO runs VALUES(?,?,?,?,?,?,NULL)")
+        .run(id, job.id, job.version, now, "claimed", now + 600000);
+      this.set("run.mode:" + id, "correction");
+      this.set(
+        "run.sourceChanges:" + id,
+        this.get<SourceChange[]>("correction.changes:" + jobId, []),
+      );
+      this.set("correction.changes:" + jobId, []);
+      this.set("correction.pending:" + jobId, false);
+
+      return this.run(id);
+    });
+  }
+
   run(id: string): Run {
     const r = this.db.prepare("SELECT * FROM runs WHERE id=?").get(id) as any;
 
@@ -248,11 +281,24 @@ export class Store {
   }
 
   runState(id: string, status: string, sessionId?: string) {
-    this.db
-      .prepare(
-        "UPDATE runs SET status=?,session_id=COALESCE(?,session_id),lease_until=? WHERE id=?",
-      )
-      .run(status, sessionId ?? null, Date.now() + 600000, id);
+    this.transaction(() => {
+      const run = this.run(id);
+
+      if (
+        ["failed", "cancelled"].includes(status) &&
+        ["claimed", "running"].includes(run.status) &&
+        this.get<string>("run.mode:" + id, "news") === "correction"
+      ) {
+        this.queueCorrection(run.jobId, this.get<SourceChange[]>("run.sourceChanges:" + id, []));
+        this.set("correction.retryAt:" + run.jobId, Date.now() + 60000);
+      }
+
+      this.db
+        .prepare(
+          "UPDATE runs SET status=?,session_id=COALESCE(?,session_id),lease_until=? WHERE id=?",
+        )
+        .run(status, sessionId ?? null, Date.now() + 600000, id);
+    });
   }
 
   recoverRuns() {
@@ -298,12 +344,12 @@ export class Store {
     };
   }
 
-  publications(channelId?: string): Publication[] {
+  publications(channelId?: string, limit?: number, offset = 0): Publication[] {
     return this.db
       .prepare(
-        "SELECT id FROM publications WHERE (? IS NULL OR channel_id=?) ORDER BY rowid DESC LIMIT 100",
+        "SELECT id FROM publications WHERE (? IS NULL OR channel_id=?) ORDER BY rowid DESC LIMIT ? OFFSET ?",
       )
-      .all(channelId ?? null, channelId ?? null)
+      .all(channelId ?? null, channelId ?? null, limit ?? -1, offset)
       .map((r: any) => this.publication(r.id));
   }
 
@@ -391,23 +437,73 @@ export class Store {
       .run(status, id);
   }
 
-  source(source: string, messages: any[]) {
-    this.transaction(() => {
-      for (const m of messages)
+  source(source: string, messages: any[], cursor?: number) {
+    return this.transaction(() => {
+      const changed: number[] = [];
+      const prior = this.db.prepare(
+        "SELECT data FROM source_messages WHERE source=? AND message_id=?",
+      );
+
+      for (const m of messages) {
+        const row = prior.get(source, m.id) as { data: string } | undefined;
+        const old = row ? JSON.parse(row.data) : undefined;
+
+        if (old && (old.text !== m.text || Boolean(old.deleted) !== Boolean(m.deleted)))
+          changed.push(m.id);
+
         this.db
           .prepare(
             "INSERT INTO source_messages VALUES(?,?,?,?) ON CONFLICT(source,message_id) DO UPDATE SET data=excluded.data,updated_at=excluded.updated_at",
           )
           .run(source, m.id, JSON.stringify(m), Date.now());
+      }
 
-      this.set(
-        "source.cursor:" + source,
-        Math.max(this.get("source.cursor:" + source, 0), ...messages.map((m) => m.id)),
-      );
+      // Only an acknowledged, ordered history batch advances the scan checkpoint.
+      // Live events and edit/deletion refreshes may arrive beyond a history gap.
+      if (cursor !== undefined)
+        this.set(
+          "source.cursor:" + source,
+          Math.max(this.get("source.cursor:" + source, 0), cursor),
+        );
+
+      if (changed.length) {
+        for (const j of this.jobs())
+          if (j.sources.some((src) => src.kind === "telegram" && src.reference === source))
+            this.queueCorrection(
+              j.id,
+              changed.map((messageId) => ({ source, messageId })),
+            );
+
+        this.event("source.changed", { source, messageIds: changed });
+      }
+
+      return changed;
     });
   }
 
-  sourceMessages(source: string) {
+  private queueCorrection(jobId: string, changes: SourceChange[]) {
+    const pending = this.get<SourceChange[]>("correction.changes:" + jobId, []);
+    const unique = new Map(
+      [...pending, ...changes].map((change) => [JSON.stringify(change), change]),
+    );
+
+    this.set("correction.changes:" + jobId, [...unique.values()]);
+    this.set("correction.pending:" + jobId, true);
+  }
+
+  sourceMessages(source: string, ids?: number[]) {
+    if (ids) {
+      const statement = this.db.prepare(
+        "SELECT data FROM source_messages WHERE source=? AND message_id=?",
+      );
+
+      return [...new Set(ids)].flatMap((id) => {
+        const row = statement.get(source, id) as { data: string } | undefined;
+
+        return row ? [JSON.parse(row.data)] : [];
+      });
+    }
+
     return this.db
       .prepare("SELECT data FROM source_messages WHERE source=? ORDER BY message_id DESC LIMIT 50")
       .all(source)

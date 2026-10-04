@@ -5,6 +5,8 @@ import os
 import tempfile
 import unittest
 from unittest.mock import AsyncMock, patch
+from datetime import datetime, timezone
+from types import SimpleNamespace
 
 _TEMP = tempfile.TemporaryDirectory(prefix="tg-userbot-test-")
 os.environ["TG_DATA_DIR"] = _TEMP.name
@@ -18,6 +20,112 @@ from userbot import app as worker
 
 
 class WorkerTests(unittest.TestCase):
+    def test_catchup_does_not_skip_more_than_one_page_after_live_update(self):
+        def message(mid):
+            return SimpleNamespace(
+                id=mid,
+                raw_text=f"Message {mid}",
+                date=datetime.now(timezone.utc),
+                edit_date=None,
+                photo=None,
+                grouped_id=None,
+                noforwards=False,
+            )
+
+        acknowledged = []
+        saved_cursor = 10
+
+        async def ingest(source, messages, cursor=None):
+            nonlocal saved_cursor
+            acknowledged.extend(m["id"] for m in messages)
+            if cursor is not None:
+                saved_cursor = max(saved_cursor, cursor)
+
+        async def history(peer, min_id, reverse, limit):
+            self.assertTrue(reverse)
+            for mid in range(min_id + 1, min(610, min_id + limit) + 1):
+                yield message(mid)
+
+        with (
+            patch.object(worker, "entity", AsyncMock(return_value="peer")),
+            patch.object(worker.utils, "get_peer_id", return_value=1),
+            patch.object(worker.client, "iter_messages", history),
+            patch.object(
+                worker.client, "get_messages", AsyncMock(return_value=[message(610)])
+            ),
+            patch.object(worker, "ingest", ingest),
+        ):
+            asyncio.run(worker.ingest("@source", [worker.serialize(message(610))]))
+            self.assertEqual(saved_cursor, 10)
+            asyncio.run(worker.scan({"source": "@source", "cursor": saved_cursor}))
+            self.assertEqual(saved_cursor, 510)
+            asyncio.run(worker.scan({"source": "@source", "cursor": saved_cursor}))
+            self.assertEqual(saved_cursor, 610)
+            self.assertTrue(set(range(11, 611)).issubset(acknowledged))
+
+    def test_catchup_resumes_at_last_acknowledged_batch_after_failure(self):
+        def message(mid):
+            return SimpleNamespace(
+                id=mid,
+                raw_text=str(mid),
+                date=datetime.now(timezone.utc),
+                edit_date=None,
+                photo=None,
+                grouped_id=None,
+                noforwards=False,
+            )
+
+        saved_cursor = 10
+        calls = 0
+
+        async def ingest(source, messages, cursor=None):
+            nonlocal saved_cursor, calls
+            calls += 1
+            if calls == 2:
+                raise httpx.ConnectError("Dispatcher unavailable")
+            if cursor is not None:
+                saved_cursor = cursor
+
+        async def history(peer, min_id, reverse, limit):
+            for mid in range(min_id + 1, 261):
+                yield message(mid)
+
+        with (
+            patch.object(worker, "entity", AsyncMock(return_value="peer")),
+            patch.object(worker.utils, "get_peer_id", return_value=1),
+            patch.object(worker.client, "iter_messages", history),
+            patch.object(worker.client, "get_messages", AsyncMock(return_value=[])),
+            patch.object(worker, "ingest", ingest),
+        ):
+            with self.assertRaises(httpx.ConnectError):
+                asyncio.run(worker.scan({"source": "@source", "cursor": saved_cursor}))
+            self.assertEqual(saved_cursor, 110)
+            asyncio.run(worker.scan({"source": "@source", "cursor": saved_cursor}))
+            self.assertEqual(saved_cursor, 260)
+
+    def test_bootstrap_and_tracked_reads_are_bounded(self):
+        reads = AsyncMock(return_value=[])
+        ingest = AsyncMock()
+        with (
+            patch.object(worker, "entity", AsyncMock(return_value="peer")),
+            patch.object(worker.utils, "get_peer_id", return_value=1),
+            patch.object(worker.client, "get_messages", reads),
+            patch.object(worker, "ingest", ingest),
+        ):
+            asyncio.run(
+                worker.scan(
+                    {
+                        "source": "@source",
+                        "cursor": 0,
+                        "trackedIds": list(range(1, 251)),
+                    }
+                )
+            )
+        self.assertEqual(
+            [len(c.kwargs["ids"]) for c in reads.call_args_list[1:]], [100, 100, 50]
+        )
+        self.assertEqual(ingest.call_args_list[0].kwargs, {"cursor": 0})
+
     def test_authentication_and_schema(self):
         async def check():
             async with httpx.AsyncClient(

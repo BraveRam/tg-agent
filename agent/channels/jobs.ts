@@ -53,6 +53,7 @@ export default defineChannel({
       const body = z
         .object({
           source: z.string(),
+          cursor: z.number().int().nonnegative().optional(),
           messages: z.array(
             z
               .object({ id: z.number().int(), text: z.string(), deleted: z.boolean().optional() })
@@ -61,20 +62,8 @@ export default defineChannel({
         })
         .parse(await request.json());
       const s = store();
-      const previous = s.sourceMessages(body.source);
-      const changed = body.messages.filter((m) =>
-        previous.some((old) => old.id === m.id && (old.text !== m.text || m.deleted)),
-      );
 
-      s.source(body.source, body.messages);
-
-      if (changed.length) {
-        for (const j of s.jobs())
-          if (j.sources.some((src) => src.kind === "telegram" && src.reference === body.source))
-            s.set("correction.pending:" + j.id, true);
-
-        s.event("source.changed", { source: body.source, messageIds: changed.map((m) => m.id) });
-      }
+      s.source(body.source, body.messages, body.cursor);
 
       return Response.json({ ok: true });
     }),
