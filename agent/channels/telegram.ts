@@ -8,6 +8,10 @@ export default telegramChannel({
     webhookSecretToken: () => config().webhookSecret,
   },
   uploadPolicy: { allowedMediaTypes: ["image/*", "application/pdf"], maxBytes: 10 * 1024 * 1024 },
+  events: {
+    // The activity hook sends both intermediate assistant text and final replies.
+    "message.completed": () => {},
+  },
 
   onMessage(_ctx, message) {
     if (
