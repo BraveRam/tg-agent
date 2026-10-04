@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { activityText, activityChunks, sendActivity } from "../agent/lib/activity";
+import { closeToolBatch, updateToolActivity } from "../agent/lib/tool-activity";
 import { activityHook } from "../agent/hooks/telegram_activity";
 import { Store } from "../agent/lib/store";
 import { TelegramError } from "../agent/lib/telegram";
@@ -174,7 +175,11 @@ test("activity hook shows interim and final messages, nested tools, skills and t
   const f = fixture();
   const deliver: typeof sendActivity = (ctx, id, text) =>
     sendActivity(ctx, id, text, f.s, f.send, f.pause);
-  const hook = activityHook(deliver);
+  const hook = activityHook(
+    deliver,
+    (ctx, turn, updates) => updateToolActivity(ctx, turn, updates, f.s, f.send, f.pause),
+    (ctx, turn, key) => closeToolBatch(ctx, turn, key, f.s),
+  );
 
   try {
     const common = { turnId: "turn", stepIndex: 0, sequence: 1 };
@@ -227,15 +232,143 @@ test("activity hook shows interim and final messages, nested tools, skills and t
       f.ctx,
     );
 
+    const count = f.calls.length;
+
+    await hook.events!["action.result"]!(
+      {
+        type: "action.result",
+        data: {
+          ...common,
+          result: { kind: "tool-result", callId: "skill", toolName: "load-skill", output: null },
+          status: "completed",
+        },
+        meta: { id: "success", at: "" },
+      },
+      f.ctx,
+    );
+    assert.equal(f.calls.length, count);
+    assert.equal(f.calls.filter((call) => call.method === "sendMessage").length, 3);
+    assert.equal(f.calls.at(-1).method, "editMessageText");
+
     const texts = f.calls.map((call) => call.body.text);
 
     assert.ok(texts.includes("Checking sources"));
     assert.ok(texts.includes("Answer"));
     assert.ok(texts.some((text) => text.includes("fetch") && text.includes("https://example.com")));
     assert.ok(texts.some((text) => text.includes("load-skill") && text.includes("news")));
-    assert.ok(
-      texts.some((text) => text.includes("failed") && text.includes("Network unavailable")),
+    assert.ok(texts.some((text) => text.includes("⚠") && text.includes("Network unavailable")));
+  } finally {
+    f.clean();
+  }
+});
+
+test("terminal cards append copyable commands and route late errors back after restart", async () => {
+  const f = fixture();
+
+  try {
+    const first = { callId: "one", name: "terminal", input: { command: "echo '<>&😀'" } };
+
+    await updateToolActivity(f.ctx, "turn", [first], f.s, f.send, f.pause);
+    await updateToolActivity(
+      f.ctx,
+      "turn",
+      [{ callId: "two", name: "terminal", input: { command: "pwd" } }],
+      f.s,
+      f.send,
+      f.pause,
     );
+    assert.deepEqual(
+      f.calls.map((call) => call.method),
+      ["sendMessage", "editMessageText"],
+    );
+    assert.equal(f.calls[1].body.message_id, 1);
+    assert.equal(f.calls[1].body.text, "💻 terminal\n\necho '<>&😀'\n\npwd");
+
+    const blocks = f.calls[1].body.entities.filter((entity: any) => entity.type === "pre");
+
+    assert.deepEqual(
+      blocks.map((entity: any) => entity.language),
+      ["shell", "shell"],
+    );
+    assert.deepEqual(
+      blocks.map((entity: any) =>
+        f.calls[1].body.text.slice(entity.offset, entity.offset + entity.length),
+      ),
+      ["echo '<>&😀'", "pwd"],
+    );
+    closeToolBatch(f.ctx, "turn", "assistant", f.s);
+
+    const reopened = new Store(f.dir);
+
+    try {
+      await updateToolActivity(f.ctx, "turn", [first], reopened, f.send, f.pause);
+      assert.equal(f.calls.length, 2);
+      await updateToolActivity(
+        f.ctx,
+        "turn",
+        [{ callId: "one", name: "terminal", error: "Offline" }],
+        reopened,
+        f.send,
+        f.pause,
+      );
+      assert.equal(f.calls[2].body.message_id, 1);
+      assert.match(f.calls[2].body.text, /⚠ Offline/);
+      await updateToolActivity(
+        f.ctx,
+        "turn",
+        [{ callId: "three", name: "status", input: {} }],
+        reopened,
+        f.send,
+        f.pause,
+      );
+      assert.equal(f.calls[3].method, "sendMessage");
+      assert.ok(!f.calls[3].body.text.includes("{}"));
+    } finally {
+      reopened.close();
+    }
+  } finally {
+    f.clean();
+  }
+});
+
+test("tool batches paginate at command boundaries and suppress ambiguous resends", async () => {
+  const f = fixture();
+
+  try {
+    await updateToolActivity(
+      f.ctx,
+      "turn",
+      Array.from({ length: 6 }, (_, i) => ({
+        callId: String(i),
+        name: "terminal",
+        input: { command: "a".repeat(3000) },
+      })),
+      f.s,
+      f.send,
+      f.pause,
+    );
+    assert.equal(f.calls.length, 3);
+
+    for (const call of f.calls) {
+      assert.ok(call.body.text.length <= 4096);
+      assert.equal(call.body.entities.filter((entity: any) => entity.type === "pre").length, 2);
+      assert.ok(
+        call.body.entities.every(
+          (entity: any) => entity.offset + entity.length <= call.body.text.length,
+        ),
+      );
+    }
+
+    let attempts = 0;
+    const fail = async () => {
+      attempts++;
+      throw new TelegramError("Timeout", true);
+    };
+    const update = [{ callId: "uncertain", name: "jobs", input: { action: "list" } }];
+
+    await updateToolActivity(f.ctx, "other", update, f.s, fail, f.pause);
+    await updateToolActivity(f.ctx, "other", update, f.s, fail, f.pause);
+    assert.equal(attempts, 1);
   } finally {
     f.clean();
   }

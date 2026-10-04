@@ -48,18 +48,58 @@ export function activityChunks(text: string): string[] {
   return chunks;
 }
 
-type ActivitySend = (method: string, body: unknown) => Promise<any>;
+export type ActivitySend = (method: string, body: unknown) => Promise<any>;
 
-type ActivityPause = (ms: number) => Promise<void>;
+export type ActivityPause = (ms: number) => Promise<void>;
 
 let deliveries: Promise<void> = Promise.resolve();
 
-function orderedDelivery(operation: () => Promise<void>) {
+export function orderedDelivery(operation: () => Promise<void>) {
   const next = deliveries.then(operation);
 
   deliveries = next.catch(() => {});
 
   return next;
+}
+
+export async function activityRequest(
+  method: string,
+  body: unknown,
+  s: Store,
+  send: ActivitySend,
+  pause: ActivityPause,
+) {
+  const sendAt = s.transaction(() => {
+    const at = Math.max(Date.now(), s.get("activity.nextSendAt", 0));
+
+    s.set("activity.nextSendAt", at + 1100);
+
+    return at;
+  });
+
+  if (sendAt > Date.now()) await pause(sendAt - Date.now());
+
+  try {
+    return await send(method, body);
+  } catch (error) {
+    if (
+      method === "editMessageText" &&
+      error instanceof TelegramError &&
+      !error.ambiguous &&
+      /message is not modified/i.test(error.message)
+    )
+      return true;
+
+    if (!(error instanceof TelegramError) || error.ambiguous || !error.retryAfter) throw error;
+
+    s.set("activity.nextSendAt", Date.now() + error.retryAfter * 1000 + 1100);
+
+    if (error.retryAfter > 30) throw error;
+
+    await pause(error.retryAfter * 1000);
+
+    return send(method, body);
+  }
 }
 
 export async function sendActivity(
@@ -103,37 +143,12 @@ export async function sendActivity(
       if (claimed !== "claimed") return;
 
       try {
-        const sendAt = s.transaction(() => {
-          const at = Math.max(Date.now(), s.get("activity.nextSendAt", 0));
-
-          s.set("activity.nextSendAt", at + 1100);
-
-          return at;
-        });
-
-        if (sendAt > Date.now()) await pause(sendAt - Date.now());
-
         const body = {
           chat_id: config().ownerId,
           text: chunk,
           disable_web_page_preview: true,
         };
-        let result;
-
-        try {
-          result = await send("sendMessage", body);
-        } catch (error) {
-          if (!(error instanceof TelegramError) || error.ambiguous || !error.retryAfter)
-            throw error;
-
-          s.set("activity.nextSendAt", Date.now() + error.retryAfter * 1000 + 1100);
-
-          // A flood rejection confirms nothing was sent. Retry once after its wait.
-          if (error.retryAfter > 30) throw error;
-
-          await pause(error.retryAfter * 1000);
-          result = await send("sendMessage", body);
-        }
+        const result = await activityRequest("sendMessage", body, s, send, pause);
 
         s.set(key, { status: "sent", messageId: result.message_id });
       } catch (error) {

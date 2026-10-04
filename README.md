@@ -29,7 +29,7 @@ Example requests:
 
 Supported intervals start at one minute. Clock schedules support multiple daily times and optional weekdays. Default timezone: `Africa/Nairobi`; default interval: five minutes.
 
-The owner private chat shows every completed assistant message, tool call and its inputs, and completion/failure status. Specialist and scheduled-job activity is included. Integration secrets are redacted, long messages are split, and ambiguous activity sends are recorded without blindly replaying them. Human-input buttons still work through Eve's native Telegram channel.
+The owner private chat shows interim and final assistant messages. Tool batches share an editable progress card with copyable command blocks and concise argument previews; failures update the same card, and successful completions stay quiet. Specialist and scheduled-job activity is included. Integration secrets are redacted, long messages are split, and ambiguous activity sends are recorded without blindly replaying them. Human-input buttons still work through Eve's native Telegram channel.
 
 ## Persistence and delivery
 
