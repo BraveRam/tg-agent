@@ -1,5 +1,6 @@
 import { telegramChannel } from "eve/channels/telegram";
 
+import { incomingAttachments } from "../lib/incoming-attachments";
 import { config } from "../lib/config";
 import { ownerCallbackResponse } from "../lib/callback-auth";
 
@@ -26,6 +27,8 @@ export default telegramChannel({
     )
       return null;
 
+    const attachments = incomingAttachments(message);
+
     return {
       auth: {
         authenticator: "telegram",
@@ -35,6 +38,11 @@ export default telegramChannel({
           privateChat: "true",
         },
       },
+      context: attachments.length
+        ? [
+            `Incoming attachment download metadata (incomingAttachments): ${JSON.stringify(attachments)}. To save bytes into your sandbox, use telegram_api getFile with file_id and downloadTo, not source_media.`,
+          ]
+        : [],
       title: "Owner conversation",
     };
   },

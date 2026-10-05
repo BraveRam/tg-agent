@@ -9,7 +9,7 @@ import { userbotScope } from "../lib/userbot-scope";
 
 export default defineTool({
   description:
-    "Download permitted photo, video or document from a configured source or destination message into the current sandbox. Protected Telegram media is unavailable.",
+    "Download photo, video or document from a configured source or destination CHANNEL message into the sandbox. Not for incoming owner private-chat attachments: use telegram_api getFile with injected incomingAttachments file_id and downloadTo for those. Protected channel media is unavailable.",
   inputSchema: z.object({
     channel: z.string(),
     messageId: z.number().int().positive(),
@@ -17,6 +17,11 @@ export default defineTool({
   }),
 
   async execute({ channel, messageId, path }, ctx) {
+    if ([config().ownerId, "telegram", "private"].includes(channel))
+      throw new Error(
+        "Private-chat attachments use telegram_api getFile with incomingAttachments file_id and downloadTo; source_media reads channels only",
+      );
+
     const response = await fetch(`http://127.0.0.1:${config().userbotPort}/media`, {
       method: "POST",
       headers: { "Content-Type": "application/json", authorization: "Bearer " + userbotScope(ctx) },
