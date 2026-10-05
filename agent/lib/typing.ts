@@ -4,6 +4,7 @@ import { config } from "./config";
 import { requireOwner } from "./security";
 import { store, type Store } from "./store";
 import { bot, TelegramError } from "./telegram";
+import { chatTurnKey } from "./cancel-command";
 
 const key = "telegram.typing.active";
 
@@ -19,6 +20,9 @@ export function recordTyping(
   }
 
   if (ctx.session.parent || (ctx.agent.nodeId && ctx.agent.nodeId !== "root")) return;
+
+  const auth = ctx.session.auth.current;
+  const turnId = event.data?.turnId;
 
   const start = ["turn.started", "step.started"].includes(event.type);
   const stop =
@@ -39,8 +43,30 @@ export function recordTyping(
 
     if (marker && s.get(marker, false)) return;
 
+    if (
+      auth?.attributes?.privateChat === "true" &&
+      !auth.attributes.runId &&
+      !auth.attributes.jobId
+    ) {
+      if (["turn.started", "step.started"].includes(event.type) && turnId)
+        s.set(chatTurnKey, { sessionId: ctx.session.id, turnId });
+      else if (
+        [
+          "turn.completed",
+          "turn.failed",
+          "turn.cancelled",
+          "session.completed",
+          "session.failed",
+        ].includes(event.type)
+      ) {
+        const current = s.get<any>(chatTurnKey, null);
+
+        if (current?.sessionId === ctx.session.id && (!turnId || current.turnId === turnId))
+          s.set(chatTurnKey, null);
+      }
+    }
+
     const active = s.get<Record<string, string>>(key, {});
-    const turnId = event.data?.turnId;
 
     if (start && turnId) active[ctx.session.id] = turnId;
     else if (!turnId || active[ctx.session.id] === turnId) delete active[ctx.session.id];

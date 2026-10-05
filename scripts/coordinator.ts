@@ -10,6 +10,7 @@ import { bot, userbot, notify } from "../agent/lib/telegram";
 import { ownerUpdate } from "../agent/lib/security";
 import { deliverPublication, reconcilePublication } from "../agent/lib/publishing";
 import { refreshTyping } from "../agent/lib/typing";
+import { handleCancelCommand } from "../agent/lib/cancel-command";
 import {
   queueCallbackKeyboardRemoval,
   clearCallbackKeyboards,
@@ -41,6 +42,7 @@ async function sendRun(id: string) {
 }
 
 async function poll() {
+  const client = new Client({ host: `http://127.0.0.1:${c.port}` });
   const webhook = await bot("getWebhookInfo", {});
 
   if (webhook.url) throw new Error("This bot has a webhook. Remove it before using local polling.");
@@ -68,6 +70,17 @@ async function poll() {
       }
 
       try {
+        if (
+          await handleCancelCommand(
+            update,
+            ({ sessionId, turnId }) => client.sessions.attach(sessionId).cancel({ turnId }),
+            s,
+          )
+        ) {
+          s.inboxState(row.update_id, "delivered");
+          continue;
+        }
+
         const r = await fetch(`http://127.0.0.1:${c.port}/eve/v1/telegram`, {
           method: "POST",
           headers: {
