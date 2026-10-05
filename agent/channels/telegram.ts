@@ -2,6 +2,7 @@ import { telegramChannel } from "eve/channels/telegram";
 
 import { ownerJoinReferences } from "../lib/source-authorization";
 import { config } from "../lib/config";
+import { ownerCallbackResponse } from "../lib/callback-auth";
 
 export default telegramChannel({
   credentials: {
@@ -12,6 +13,10 @@ export default telegramChannel({
   events: {
     // The activity hook sends both intermediate assistant text and final replies.
     "message.completed": () => {},
+  },
+
+  onInputResponse(_ctx, query) {
+    return ownerCallbackResponse(query);
   },
 
   onMessage(_ctx, message) {

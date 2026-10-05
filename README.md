@@ -66,7 +66,7 @@ Use `bun run test`, because the implementation uses Node 24's SQLite module; Bun
 
 Eve is pinned to 0.70.0. The official `@agent-browser/eve` 0.38.2 registry package was built against an older unsupported tool contract. `integrations/agent-browser` preserves its published implementation and rebuilds it with the current compiler during `bun install`. Docker images bake in the browser and Chromium once.
 
-`patches/eve@0.70.0.patch` adds shared SELinux labeling to Eve's read-only Docker resource mount, required on Fedora. It affects only generated sandbox resources. Bun uses a hoisted dependency layout so the patched framework resolves its runtime dependencies. Run `bun run format` after changes.
+`patches/eve@0.70.0.patch` adds shared SELinux labeling to Eve's read-only Docker resource mount, required on Fedora. It also adds an `onInputResponse` hook to authenticate native Telegram button selections before resuming a waiting turn; this app accepts only the owner in their private chat. Bun uses a hoisted dependency layout so the patched framework resolves its runtime dependencies. Run `bun run format` after changes.
 
 This release is local and single-owner. Deployment, customer accounts, signed-in website browsing, and second-level schedules are outside its scope.
 
