@@ -1,7 +1,7 @@
 import { defineAgent } from "eve";
 
 export default defineAgent({
-  model: "zai/glm-5.3-flash",
-  reasoning: "high",
+  model: "xiaomi/mimo-v2.6-pro",
+  reasoning: "medium",
   description: "Collect relevant primary evidence for a news story. Cannot publish.",
 });

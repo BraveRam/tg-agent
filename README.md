@@ -13,7 +13,7 @@ uv pip sync --python .venv/bin/python userbot/requirements.lock
 bun dev
 ```
 
-First run asks for the AI Gateway key, BotFather bot token, your numeric Telegram account ID, and Telegram API ID/hash from https://my.telegram.org. It then logs in the dedicated userbot account using your phone, code, and optional 2FA password. Secrets stay in the local terminal and `.env.local`; do not send them through chat. The main agent and both specialists use `zai/glm-5.3-flash` through AI Gateway with high reasoning.
+First run asks for the AI Gateway key, BotFather bot token, your numeric Telegram account ID, and Telegram API ID/hash from https://my.telegram.org. It then logs in the dedicated userbot account using your phone, code, and optional 2FA password. Secrets stay in the local terminal and `.env.local`; do not send them through chat. The main agent and both specialists use `xiaomi/mimo-v2.6-pro` through AI Gateway with medium reasoning.
 
 The bot must be an administrator with posting, editing and deletion rights in destination channels. The dedicated user account must be able to read the source and destination channels. Send your bot a private Telegram message to start. `Ctrl+C` stops all workers. A second instance sharing the data directory cannot start.
 
