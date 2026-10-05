@@ -11,6 +11,7 @@ import { ownerUpdate } from "../agent/lib/security";
 import { deliverPublication, reconcilePublication } from "../agent/lib/publishing";
 import { refreshTyping } from "../agent/lib/typing";
 import { handleCancelCommand } from "../agent/lib/cancel-command";
+import { handleResetCommand } from "../agent/lib/reset-command";
 import {
   queueCallbackKeyboardRemoval,
   clearCallbackKeyboards,
@@ -74,6 +75,18 @@ async function poll() {
           await handleCancelCommand(
             update,
             ({ sessionId, turnId }) => client.sessions.attach(sessionId).cancel({ turnId }),
+            s,
+          )
+        ) {
+          s.inboxState(row.update_id, "delivered");
+          continue;
+        }
+
+        if (
+          await handleResetCommand(
+            update,
+            (sessionId) =>
+              client.sessions.attach(sessionId).reset({ reason: "Owner requested a fresh chat" }),
             s,
           )
         ) {

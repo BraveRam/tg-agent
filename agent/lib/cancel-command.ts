@@ -4,6 +4,8 @@ import { notify } from "./telegram";
 
 export const chatTurnKey = "telegram.chat.currentTurn";
 
+export const chatSessionKey = "telegram.chat.currentSession";
+
 type Target = { sessionId: string; turnId: string };
 
 type Cancel = (target: Target) => Promise<{ status: string }>;

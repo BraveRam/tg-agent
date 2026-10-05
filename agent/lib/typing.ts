@@ -4,7 +4,7 @@ import { config } from "./config";
 import { requireOwner } from "./security";
 import { store, type Store } from "./store";
 import { bot, TelegramError } from "./telegram";
-import { chatTurnKey } from "./cancel-command";
+import { chatSessionKey, chatTurnKey } from "./cancel-command";
 
 const key = "telegram.typing.active";
 
@@ -64,6 +64,9 @@ export function recordTyping(
         if (current?.sessionId === ctx.session.id && (!turnId || current.turnId === turnId))
           s.set(chatTurnKey, null);
       }
+
+      if (["turn.started", "step.started"].includes(event.type))
+        s.set(chatSessionKey, ctx.session.id);
     }
 
     const active = s.get<Record<string, string>>(key, {});
