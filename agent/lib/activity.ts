@@ -6,6 +6,7 @@ import { config } from "./config";
 import { requireOwner } from "./security";
 import { Store, store } from "./store";
 import { bot, TelegramError } from "./telegram";
+import { markdownToTelegramHtml } from "./telegram-format";
 
 export function activityText(value: unknown): string {
   let text =
@@ -143,12 +144,36 @@ export async function sendActivity(
       if (claimed !== "claimed") return;
 
       try {
-        const body = {
+        const plain = {
           chat_id: config().ownerId,
           text: chunk,
           disable_web_page_preview: true,
         };
-        const result = await activityRequest("sendMessage", body, s, send, pause);
+        const html = markdownToTelegramHtml(chunk);
+        let result;
+
+        try {
+          result =
+            html.length <= 4096
+              ? await activityRequest(
+                  "sendMessage",
+                  { ...plain, text: html, parse_mode: "HTML" },
+                  s,
+                  send,
+                  pause,
+                )
+              : await activityRequest("sendMessage", plain, s, send, pause);
+        } catch (error) {
+          // A definite formatting rejection means nothing was delivered, so plain text is safe.
+          if (
+            !(error instanceof TelegramError) ||
+            error.ambiguous ||
+            !/can't parse entities|unsupported start tag|can't find end tag/i.test(error.message)
+          )
+            throw error;
+
+          result = await activityRequest("sendMessage", plain, s, send, pause);
+        }
 
         s.set(key, { status: "sent", messageId: result.message_id });
       } catch (error) {
