@@ -315,6 +315,36 @@ export class Store {
     return this.job(id);
   }
 
+  deleteJob(id: string) {
+    this.job(id);
+
+    const cancelledRuns = this.db
+      .prepare(
+        "UPDATE runs SET status='cancelled' WHERE job_id=? AND status IN ('claimed','running')",
+      )
+      .run(id).changes;
+    const runs = (this.db.prepare("SELECT COUNT(*) AS n FROM runs WHERE job_id=?").get(id) as any)
+      .n;
+    const publications = (
+      this.db
+        .prepare(
+          "SELECT COUNT(*) AS n FROM publications WHERE run_id IN (SELECT id FROM runs WHERE job_id=?)",
+        )
+        .get(id) as any
+    ).n;
+
+    this.db.prepare("DELETE FROM jobs WHERE id=?").run(id);
+    this.event("job.deleted", { id, cancelledRuns });
+
+    return {
+      id,
+      deleted: true,
+      cancelledRuns,
+      preservedRuns: runs,
+      preservedPublications: publications,
+    };
+  }
+
   resetMissedCalendar(now = Date.now()) {
     for (const j of this.jobs())
       if (j.schedule.kind === "calendar" && j.nextDue < now)

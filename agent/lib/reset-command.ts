@@ -25,7 +25,9 @@ export async function handleResetCommand(
   }
 
   if (!command.result) {
-    if (!command.sessionId) command.result = "No chat session to reset yet.";
+    if (!command.sessionId)
+      command.result =
+        "No private-chat session is saved yet. Send a regular message first, then use /reset.";
     else {
       const result = await reset(command.sessionId);
 

@@ -31,7 +31,9 @@ export async function handleCancelCommand(
     const result = command.target ? await cancel(command.target) : { status: "no_active_turn" };
 
     command.result =
-      result.status === "accepted" ? "Stopping current task." : "No active task to cancel.";
+      result.status === "accepted"
+        ? "Stopping current task."
+        : "No active task in this private chat. /cancel does not control scheduled jobs.";
     s.set(key, command);
 
     if (result.status === "accepted" && command.target) {

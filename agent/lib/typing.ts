@@ -80,16 +80,34 @@ export function recordTyping(
   });
 }
 
+function removeInactiveJobTyping(s: Store, now: number) {
+  const active = s.get<Record<string, string>>(key, {});
+  let changed = false;
+
+  for (const sessionId of Object.keys(active)) {
+    const run = s.db
+      .prepare("SELECT status,lease_until FROM runs WHERE session_id=?")
+      .get(sessionId) as { status: string; lease_until: number } | undefined;
+
+    if (run && (!(run.status === "claimed" || run.status === "running") || run.lease_until < now)) {
+      delete active[sessionId];
+      changed = true;
+    }
+  }
+
+  if (changed) s.set(key, active);
+
+  return active;
+}
+
 export async function refreshTyping(
   s: Store = store(),
   send: (method: string, body: unknown) => Promise<unknown> = bot,
   now = Date.now(),
 ) {
-  if (
-    !config().ownerId ||
-    !Object.keys(s.get<Record<string, string>>(key, {})).length ||
-    s.get("telegram.typing.retryAt", 0) > now
-  )
+  const active = removeInactiveJobTyping(s, now);
+
+  if (!config().ownerId || !Object.keys(active).length || s.get("telegram.typing.retryAt", 0) > now)
     return;
 
   try {

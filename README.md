@@ -21,6 +21,8 @@ Send `/cancel` in the private bot chat to request cancellation of the current ta
 
 Send `/reset` to retire the current private chat session, cancel its active work, and start fresh on your next message. It clears Eve's conversation context and session-level memory while keeping saved owner memories, preferences, channels, sources, jobs, publishing history, and credentials.
 
+Ask the agent to delete a job to remove its schedule and cancel queued or running occurrences. Historical runs and publications remain available for audit.
+
 `bun dev` runs Eve on loopback, the authenticated Python reader, durable Telegram polling, and the dispatcher. There is no public webhook. An existing Bot API webhook must be removed before polling starts. Jobs run while this command is active.
 
 While the agent works, the coordinator refreshes the owner's typing indicator every three seconds. It pauses while waiting for your input and stops refreshing when work completes, fails, or is cancelled; Telegram then clears the indicator automatically. Active work is recorded in SQLite so a coordinator restart can resume the heartbeat.
