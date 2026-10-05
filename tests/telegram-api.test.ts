@@ -6,6 +6,7 @@ import { join } from "node:path";
 
 import { executeTelegramApi, type ApiTransport } from "../agent/lib/telegram-api";
 import { ownerJoinReferences } from "../agent/lib/source-authorization";
+import { telegramParameterErrors } from "../agent/lib/telegram-schema";
 import { Store } from "../agent/lib/store";
 
 function fixture() {
@@ -156,7 +157,7 @@ test("generic API enforces private ownership, runtime protection, nested targets
     );
     await assert.rejects(
       executeTelegramApi(
-        { method: "getUserProfilePhotos", params: { user_id: "999" } },
+        { method: "getUserProfilePhotos", params: { user_id: 999 } },
         f.ctx,
         f.s,
         transport,
@@ -185,7 +186,7 @@ test("generic API uploads albums and thumbnails, downloads privately, and preser
       method: "sendMediaGroup",
       params: {
         chat_id: "-1001",
-        media: [{ type: "photo", media: "attach://image", thumbnail: "attach://thumb" }],
+        media: [{ type: "video", media: "attach://image", thumbnail: "attach://thumb" }],
       },
       files: { image: { path: "image.png" }, thumb: { path: "thumb.jpg" } },
     };
@@ -308,4 +309,112 @@ test("channel join grants come only from explicit owner text naming the source",
   assert.deepEqual(ownerJoinReferences("Research news using @source"), []);
   assert.deepEqual(ownerJoinReferences("Stop monitoring @source"), []);
   assert.deepEqual(ownerJoinReferences("Join @source", true), []);
+});
+
+test("method discovery and rejected quiz calls recover before any send or journal claim", async () => {
+  const f = fixture();
+  let sends = 0;
+  const transport: ApiTransport = async () => {
+    sends++;
+
+    return Response.json({ ok: true, result: { message_id: 91 } });
+  };
+
+  try {
+    const schema: any = await executeTelegramApi(
+      { action: "describe", method: "sendPoll", params: {} },
+      f.ctx,
+      f.s,
+      transport,
+    );
+
+    assert.equal(sends, 0);
+    assert.equal(schema.parameters.correct_option_ids.type, "Array of Integer");
+    assert.equal(schema.definitions.InputPollOption.fields.text.required, true);
+    assert.equal(f.s.get("telegram-api:api:call", null), null);
+
+    const invalid = {
+      method: "sendPoll",
+      params: {
+        chat_id: "-1001",
+        question: "Powerhouse of the cell?",
+        type: "quiz",
+        options: ["Ribosome", "Mitochondrion"],
+        correct_option_id: 1,
+      },
+    };
+
+    await assert.rejects(executeTelegramApi(invalid, f.ctx, f.s, transport), (error: any) => {
+      assert.match(error.message, /request not sent/);
+      assert.match(error.message, /correct_option_id: unknown parameter; use correct_option_ids/);
+      assert.match(error.message, /options\[0\]: expected InputPollOption object/);
+
+      return true;
+    });
+    assert.equal(sends, 0);
+    assert.equal(f.s.get("telegram-api:api:call", null), null);
+
+    const corrected = {
+      method: "sendPoll",
+      params: {
+        chat_id: "-1001",
+        question: "Powerhouse of the cell?",
+        type: "quiz",
+        options: [{ text: "Ribosome" }, { text: "Mitochondrion" }],
+        correct_option_ids: [1],
+      },
+    };
+
+    assert.equal((await executeTelegramApi(corrected, f.ctx, f.s, transport)).status, "sent");
+    await executeTelegramApi(corrected, f.ctx, f.s, transport);
+    assert.equal(sends, 1);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test("method schemas validate required fields, primitive types and discriminated nested objects", () => {
+  assert.ok(
+    telegramParameterErrors("sendMessage", { chat_id: "-1001" }).some((error) =>
+      /text: required/.test(error),
+    ),
+  );
+  assert.ok(
+    telegramParameterErrors("sendPoll", {
+      chat_id: "-1001",
+      question: "Quiz?",
+      options: [{ text: 42 }],
+      type: "quiz",
+      correct_option_ids: ["1"],
+    }).some((error) => /options\[0\].text: expected String/.test(error)),
+  );
+  assert.ok(
+    telegramParameterErrors("sendPoll", {
+      chat_id: "-1001",
+      question: "Quiz?",
+      options: [{ text: "Yes" }],
+      type: "quiz",
+      correct_option_ids: ["1"],
+    }).some((error) => /correct_option_ids\[0\]: expected Integer/.test(error)),
+  );
+  assert.ok(
+    telegramParameterErrors("sendMediaGroup", {
+      chat_id: "-1001",
+      media: [{ type: "video", media: "file-id", width: "wide" }],
+    }).some((error) => /media\[0\].width: expected Integer/.test(error)),
+  );
+  assert.ok(
+    telegramParameterErrors("setMyCommands", {
+      commands: [],
+      scope: { type: "chat" },
+    }).some((error) => /scope.chat_id: required/.test(error)),
+  );
+  assert.deepEqual(
+    telegramParameterErrors("sendMessage", {
+      chat_id: "-1001",
+      text: "Hello",
+      reply_markup: { inline_keyboard: [[{ text: "Open", url: "https://example.com" }]] },
+    }),
+    [],
+  );
 });

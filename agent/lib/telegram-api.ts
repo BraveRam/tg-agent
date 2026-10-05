@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 
 import type { ToolContext } from "eve/tools";
 
-import methods from "./bot-methods";
+import { telegramMethod, describeTelegramMethod, telegramParameterErrors } from "./telegram-schema";
 import { config } from "./config";
 import { activityText } from "./activity";
 import { requireControl } from "./security";
@@ -12,6 +12,7 @@ import { bot, TelegramError } from "./telegram";
 export type ApiTransport = (url: string, init?: RequestInit) => Promise<Response>;
 
 export interface ApiInput {
+  action?: "call" | "describe";
   method: string;
   params: Record<string, unknown>;
   files?: Record<string, { path: string; filename?: string; contentType?: string }>;
@@ -22,8 +23,6 @@ const blocked = new Set(["getupdates", "setwebhook", "deletewebhook", "close", "
 
 const opaque =
   /^(inline_message_id|business_connection_id|managed_bot_id|guest_query_id|inline_query_id|shipping_query_id|pre_checkout_query_id|callback_query_id|chat_join_request_query_id|web_app_query_id|suggested_post_parameters)$/;
-
-const catalog = methods as Record<string, string[]>;
 
 export function requirePrivateControl(ctx: any) {
   const auth = requireControl(ctx);
@@ -50,11 +49,17 @@ export async function executeTelegramApi(
 
   const { method } = input;
 
-  if (!Object.hasOwn(catalog, method) || blocked.has(method.toLowerCase()))
+  if (!telegramMethod(method) || blocked.has(method.toLowerCase()))
     throw new Error("Unknown or application-owned Bot API method");
 
-  if (Object.keys(input.params).some((key) => !catalog[method].includes(key)))
-    throw new Error("Parameter not in the official method definition");
+  if (input.action === "describe") return describeTelegramMethod(method);
+
+  const errors = telegramParameterErrors(method, input.params);
+
+  if (errors.length)
+    throw new Error(
+      `Invalid ${method} parameters; request not sent. Correct these fields and retry, or inspect telegram_api with action=describe:\n${errors.join("\n")}`,
+    );
 
   const params: any = structuredClone(input.params);
   const destinations = new Set([
