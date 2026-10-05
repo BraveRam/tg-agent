@@ -10,6 +10,10 @@ import { bot, userbot, notify } from "../agent/lib/telegram";
 import { ownerUpdate } from "../agent/lib/security";
 import { deliverPublication, reconcilePublication } from "../agent/lib/publishing";
 import { refreshTyping } from "../agent/lib/typing";
+import {
+  queueCallbackKeyboardRemoval,
+  clearCallbackKeyboards,
+} from "../agent/lib/callback-keyboard";
 
 const c = config(),
   s = store();
@@ -79,8 +83,12 @@ async function poll() {
           continue;
         }
 
-        s.inboxState(row.update_id, "delivered");
+        s.transaction(() => {
+          s.inboxState(row.update_id, "delivered");
+          queueCallbackKeyboardRemoval(update, s);
+        });
         s.set("poll.health", "ready");
+        await clearCallbackKeyboards(s);
       } catch {
         // A lost HTTP acknowledgment may hide an accepted turn; do not replay it.
         s.inboxState(row.update_id, "uncertain");
@@ -104,6 +112,8 @@ async function dispatch() {
 
   while (!stopped) {
     try {
+      await clearCallbackKeyboards(s);
+
       const services: Record<string, unknown> = {};
 
       for (const name of ["eve", "userbot", "coordinator"])
