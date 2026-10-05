@@ -51,6 +51,12 @@ function terminal(name: string) {
   return /^(bash|terminal|shell|exec_command|run_command)$/.test(name);
 }
 
+function compactPreview(text: string) {
+  const characters = Array.from(activityText(text).replace(/\s+/g, " ").trim());
+
+  return characters.length > 120 ? characters.slice(0, 117).join("") + "..." : characters.join("");
+}
+
 function preview(call: ToolActivity): CardCall {
   const input =
     call.input && typeof call.input === "object" ? (call.input as Record<string, unknown>) : {};
@@ -67,7 +73,7 @@ function preview(call: ToolActivity): CardCall {
   return {
     callId: call.callId,
     name: activityText(call.name),
-    preview: formatted.slice(0, 1800) + (formatted.length > 1800 ? "\n…" : ""),
+    preview: compactPreview(formatted),
     language: terminal(call.name) ? "shell" : typeof value === "object" ? "json" : "text",
     error: call.error ? activityText(call.error).slice(0, 500) : undefined,
   };
@@ -85,9 +91,10 @@ export function renderToolCards(calls: CardCall[], prefix = ""): CardPage[] {
   };
 
   for (const call of calls) {
+    const preview = compactPreview(call.preview);
     const heading = shell ? "" : call.name;
     const error = call.error ? `\n⚠ ${call.error}` : "";
-    const block = (heading ? heading + "\n" : "") + call.preview + error;
+    const block = (heading ? heading + "\n" : "") + preview + error;
     const addition = "\n\n" + block;
 
     if (page.text.length + addition.length > 4000) {
@@ -101,11 +108,11 @@ export function renderToolCards(calls: CardCall[], prefix = ""): CardPage[] {
 
     if (heading) page.entities.push({ type: "bold", offset, length: heading.length });
 
-    if (call.preview)
+    if (preview)
       page.entities.push({
         type: "pre",
         offset: offset + (heading ? heading.length + 1 : 0),
-        length: call.preview.length,
+        length: preview.length,
         language: call.language,
       });
   }

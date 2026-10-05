@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { activityText, activityChunks, sendActivity } from "../agent/lib/activity";
-import { closeToolBatch, updateToolActivity } from "../agent/lib/tool-activity";
+import { closeToolBatch, renderToolCards, updateToolActivity } from "../agent/lib/tool-activity";
 import { activityHook } from "../agent/hooks/telegram_activity";
 import { Store } from "../agent/lib/store";
 import { TelegramError } from "../agent/lib/telegram";
@@ -331,6 +331,77 @@ test("terminal cards append copyable commands and route late errors back after r
   }
 });
 
+test("tool cards show compact single-line previews without changing tool input", async () => {
+  const f = fixture();
+  const previousSecret = process.env.TG_INTERNAL_TOKEN;
+
+  process.env.TG_INTERNAL_TOKEN = "private-preview-credential";
+
+  try {
+    const calls = [
+      {
+        callId: "long-command",
+        name: "terminal",
+        input: {
+          command: "echo private-preview-credential\n" + "😀".repeat(150) + "hidden-command-tail",
+        },
+      },
+      {
+        callId: "long-json",
+        name: "telegram_api",
+        input: {
+          method: "sendMessage",
+          params: { chat_id: "12345", text: "Long input ".repeat(100) + "hidden-json-tail" },
+        },
+      },
+      {
+        callId: "short",
+        name: "userbot__readMessages",
+        input: { body: { channel: "-1001", limit: 2 } },
+      },
+    ];
+    const original = structuredClone(calls);
+
+    await updateToolActivity(f.ctx, "compact", calls, f.s, f.send, f.pause);
+
+    const card = f.calls[0].body;
+    const previews = card.entities
+      .filter((entity: any) => entity.type === "pre")
+      .map((entity: any) => card.text.slice(entity.offset, entity.offset + entity.length));
+
+    assert.equal(previews.length, 3);
+    assert.ok(
+      previews.every((text: string) => !text.includes("\n") && Array.from(text).length <= 120),
+    );
+    assert.ok(previews[0].endsWith("..."));
+    assert.ok(previews[1].endsWith("..."));
+    assert.ok(previews[0].includes("[redacted]"));
+    assert.ok(!/private-preview-credential|hidden-command-tail|hidden-json-tail/.test(card.text));
+    assert.ok(card.text.includes("telegram_api") && card.text.includes("userbot__readMessages"));
+    assert.deepEqual(calls, original);
+    assert.ok(!/[\uD800-\uDBFF]\.\.\.$/.test(previews[0]));
+
+    const legacy = renderToolCards([
+      {
+        callId: "old",
+        name: "terminal",
+        preview: "legacy\n" + "x".repeat(1800),
+        language: "shell",
+        error: "Offline",
+      },
+    ])[0];
+    const code = legacy.entities.find((entity) => entity.type === "pre")!;
+
+    assert.equal(Array.from(legacy.text.slice(code.offset, code.offset + code.length)).length, 120);
+    assert.ok(legacy.text.includes("...\n⚠ Offline"));
+  } finally {
+    if (previousSecret === undefined) delete process.env.TG_INTERNAL_TOKEN;
+    else process.env.TG_INTERNAL_TOKEN = previousSecret;
+
+    f.clean();
+  }
+});
+
 test("tool batches paginate at command boundaries and suppress ambiguous resends", async () => {
   const f = fixture();
 
@@ -338,7 +409,7 @@ test("tool batches paginate at command boundaries and suppress ambiguous resends
     await updateToolActivity(
       f.ctx,
       "turn",
-      Array.from({ length: 6 }, (_, i) => ({
+      Array.from({ length: 65 }, (_, i) => ({
         callId: String(i),
         name: "terminal",
         input: { command: "a".repeat(3000) },
@@ -351,13 +422,21 @@ test("tool batches paginate at command boundaries and suppress ambiguous resends
 
     for (const call of f.calls) {
       assert.ok(call.body.text.length <= 4096);
-      assert.equal(call.body.entities.filter((entity: any) => entity.type === "pre").length, 2);
       assert.ok(
         call.body.entities.every(
           (entity: any) => entity.offset + entity.length <= call.body.text.length,
         ),
       );
     }
+
+    assert.equal(
+      f.calls.reduce(
+        (count, call) =>
+          count + call.body.entities.filter((entity: any) => entity.type === "pre").length,
+        0,
+      ),
+      65,
+    );
 
     let attempts = 0;
     const fail = async () => {
