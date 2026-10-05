@@ -11,6 +11,7 @@ import { ownerUpdate } from "../agent/lib/security";
 import { deliverPublication, reconcilePublication } from "../agent/lib/publishing";
 import { refreshTyping } from "../agent/lib/typing";
 import { handleCancelCommand } from "../agent/lib/cancel-command";
+import { handleContextCommand } from "../agent/lib/context-command";
 import { handleResetCommand } from "../agent/lib/reset-command";
 import {
   queueCallbackKeyboardRemoval,
@@ -87,6 +88,36 @@ async function poll() {
             update,
             (sessionId) =>
               client.sessions.attach(sessionId).reset({ reason: "Owner requested a fresh chat" }),
+            s,
+          )
+        ) {
+          s.inboxState(row.update_id, "delivered");
+          continue;
+        }
+
+        if (
+          await handleContextCommand(
+            update,
+            {
+              inspect: async () => {
+                const info = await client.info({ signal: AbortSignal.timeout(5000) });
+                const model = info.agent.model;
+
+                return {
+                  modelId: "id" in model ? model.id : undefined,
+                  reasoning: model.reasoning,
+                  contextWindowTokens: model.contextWindowTokens,
+                  skills: info.skills.static.map((skill) => skill.name),
+                  toolCount: info.tools.static.length,
+                };
+              },
+              snapshot: async (sessionId) =>
+                (
+                  await client.sessions
+                    .attach(sessionId)
+                    .snapshot({ signal: AbortSignal.timeout(5000) })
+                ).events,
+            },
             s,
           )
         ) {
