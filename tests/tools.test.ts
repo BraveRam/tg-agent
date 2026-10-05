@@ -57,10 +57,13 @@ test("memory is scoped and backend is configured", () => {
   assert.equal(memory.scope!(ctx), "owner");
 });
 
-test("source executor requires a trusted owner grant for the requested channel", async () => {
+test("private owner can monitor and join without per-message grants; other contexts are denied", async () => {
   const previousOwner = process.env.TELEGRAM_OWNER_ID;
+  const previousToken = process.env.TG_INTERNAL_TOKEN;
+  const originalFetch = globalThis.fetch;
 
   process.env.TELEGRAM_OWNER_ID = "12345";
+  process.env.TG_INTERNAL_TOKEN = "test-signing-key";
 
   const owner: any = {
     session: {
@@ -70,37 +73,74 @@ test("source executor requires a trusted owner grant for the requested channel",
           authenticator: "telegram",
           principalType: "user",
           principalId: "12345",
-          attributes: { privateChat: "true", joinReferences: [] },
+          attributes: { privateChat: "true" },
         },
       },
     },
   };
+  let requests = 0;
+
+  globalThis.fetch = (async (_url, init) => {
+    requests++;
+    assert.deepEqual(JSON.parse(init!.body as string), { channel: "@other" });
+
+    const bearer = (init!.headers as Record<string, string>).authorization.slice(7);
+    const claims = JSON.parse(Buffer.from(bearer.split(".")[0], "base64url").toString());
+
+    assert.equal(claims.join, "@other");
+    assert.deepEqual(claims.channels, []);
+
+    return Response.json({ chatId: "-100999", membership: "joined", aliases: ["@other"] });
+  }) as typeof fetch;
 
   try {
-    await assert.rejects(
-      Promise.resolve(sources.execute!({ action: "monitor", reference: "@source" }, owner)),
-      /explicitly join or monitor/,
-    );
-    assert.equal(
-      store()
-        .sources()
-        .find((source) => source.reference === "@source")?.membership,
-      "unknown",
-    );
     store().saveSource({ reference: "@source", membership: "joined", monitoring: false });
-    owner.session.auth.current.attributes.joinReferences = ["@source"];
 
     const saved: any = await sources.execute!({ action: "monitor", reference: "@source" }, owner);
 
     assert.equal(saved.monitoring, true);
     assert.equal(saved.membership, "joined");
-    await assert.rejects(
-      Promise.resolve(sources.execute!({ action: "join", reference: "@other" }, owner)),
-      /explicitly join or monitor/,
-    );
+    assert.equal(requests, 0);
+
+    const joined: any = await sources.execute!({ action: "join", reference: "@other" }, owner);
+
+    assert.equal(joined.membership, "joined");
+    assert.equal(requests, 1);
+
+    for (const session of [
+      { ...owner.session, parent: { id: "parent" } },
+      {
+        ...owner.session,
+        auth: { current: { ...owner.session.auth.current, principalId: "999" } },
+      },
+      {
+        ...owner.session,
+        auth: { current: { ...owner.session.auth.current, attributes: { privateChat: "false" } } },
+      },
+      {
+        ...owner.session,
+        auth: {
+          current: {
+            ...owner.session.auth.current,
+            attributes: { privateChat: "true", runId: "background" },
+          },
+        },
+      },
+    ]) {
+      await assert.rejects(async () =>
+        sources.execute!({ action: "join", reference: "@other" }, { ...owner, session }),
+      );
+    }
+
+    assert.equal(requests, 1);
   } finally {
+    globalThis.fetch = originalFetch;
+
     if (previousOwner === undefined) delete process.env.TELEGRAM_OWNER_ID;
     else process.env.TELEGRAM_OWNER_ID = previousOwner;
+
+    if (previousToken === undefined) delete process.env.TG_INTERNAL_TOKEN;
+    else process.env.TG_INTERNAL_TOKEN = previousToken;
   }
 });
 

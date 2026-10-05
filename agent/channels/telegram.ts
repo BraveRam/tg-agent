@@ -1,6 +1,5 @@
 import { telegramChannel } from "eve/channels/telegram";
 
-import { ownerJoinReferences } from "../lib/source-authorization";
 import { config } from "../lib/config";
 import { ownerCallbackResponse } from "../lib/callback-auth";
 
@@ -34,10 +33,6 @@ export default telegramChannel({
         principalType: "user" as const,
         attributes: {
           privateChat: "true",
-          joinReferences: ownerJoinReferences(
-            message.text || message.caption,
-            !!message.raw.forward_origin,
-          ),
         },
       },
       title: "Owner conversation",
