@@ -26,7 +26,7 @@ export default telegramChannel({
         authenticator: "telegram",
         principalId: config().ownerId,
         principalType: "user" as const,
-        attributes: {},
+        attributes: { privateChat: "true" },
       },
       title: "Owner conversation",
     };

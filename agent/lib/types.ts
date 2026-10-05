@@ -39,6 +39,7 @@ export const jobInputSchema = z.object({
   task: z.string().min(1),
   sources: z.array(sourceSchema).default([]),
   schedule: scheduleSchema.default({ kind: "interval", minutes: 5 }),
+  trigger: z.enum(["scheduled", "source_updates"]).default("scheduled"),
   freshnessHours: z.number().min(1).max(168).default(24),
 });
 
@@ -46,7 +47,8 @@ export type Schedule = z.infer<typeof scheduleSchema>;
 
 export type Channel = z.infer<typeof channelSchema> & { id: string };
 
-export type Job = z.infer<typeof jobInputSchema> & {
+export type Job = Omit<z.infer<typeof jobInputSchema>, "trigger"> & {
+  trigger?: "scheduled" | "source_updates";
   id: string;
   enabled: boolean;
   version: number;

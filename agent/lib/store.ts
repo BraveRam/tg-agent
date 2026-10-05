@@ -1,7 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import { DateTime } from "luxon";
 
@@ -10,6 +10,14 @@ import { nextDue } from "./schedule";
 import type { Channel, Job, Run, Publication, Post } from "./types";
 
 let singleton: Store | undefined;
+
+export interface SourceRecord {
+  reference: string;
+  chatId?: string;
+  aliases: string[];
+  monitoring: boolean;
+  membership: "unknown" | "joining" | "awaiting_approval" | "joined" | "failed";
+}
 
 export type SourceChange = { source: string; messageId: number };
 
@@ -35,7 +43,134 @@ export class Store {
  CREATE TABLE IF NOT EXISTS source_messages(source TEXT NOT NULL,message_id INTEGER NOT NULL,data TEXT NOT NULL,updated_at INTEGER NOT NULL,PRIMARY KEY(source,message_id));
  CREATE TABLE IF NOT EXISTS usage(operation_key TEXT PRIMARY KEY,day TEXT NOT NULL,cost REAL NOT NULL);
  CREATE TABLE IF NOT EXISTS events(id TEXT PRIMARY KEY,type TEXT NOT NULL,data TEXT NOT NULL,created_at INTEGER NOT NULL);
- PRAGMA user_version=1;`);
+ CREATE TABLE IF NOT EXISTS source_records(reference TEXT PRIMARY KEY,data TEXT NOT NULL);
+ CREATE TABLE IF NOT EXISTS source_updates(seq INTEGER PRIMARY KEY AUTOINCREMENT,source TEXT NOT NULL,message_id INTEGER NOT NULL,revision TEXT NOT NULL,data TEXT NOT NULL,received_at INTEGER NOT NULL,UNIQUE(source,message_id,revision));
+ PRAGMA user_version=2;`);
+
+    for (const job of this.jobs()) this.registerJobSources(job);
+  }
+
+  sources(): SourceRecord[] {
+    return this.db
+      .prepare("SELECT data FROM source_records")
+      .all()
+      .map((row: any) => JSON.parse(row.data));
+  }
+
+  saveSource(input: Partial<SourceRecord> & { reference: string }): SourceRecord {
+    const old = this.sources().find(
+      (source) =>
+        source.reference === input.reference ||
+        source.aliases.includes(input.reference) ||
+        (!!input.chatId && source.chatId === input.chatId),
+    );
+    const saved: SourceRecord = {
+      aliases: [],
+      monitoring: true,
+      membership: "unknown",
+      ...old,
+      ...input,
+      reference: old?.reference ?? input.reference,
+    };
+
+    saved.aliases = [...new Set([...saved.aliases, input.reference, ...(input.aliases ?? [])])];
+    this.db
+      .prepare(
+        "INSERT INTO source_records VALUES(?,?) ON CONFLICT(reference) DO UPDATE SET data=excluded.data",
+      )
+      .run(saved.reference, JSON.stringify(saved));
+
+    return saved;
+  }
+
+  private registerJobSources(job: Pick<Job, "sources">) {
+    for (const source of job.sources.filter((source) => source.kind === "telegram")) {
+      if (
+        !this.sources().some(
+          (old) => old.reference === source.reference || old.aliases.includes(source.reference),
+        )
+      )
+        this.saveSource({ reference: source.reference });
+    }
+  }
+
+  private latestSourceSequence(): number {
+    return Number(
+      (this.db.prepare("SELECT COALESCE(MAX(seq),0) AS seq FROM source_updates").get() as any).seq,
+    );
+  }
+
+  claimEventJobs(now = Date.now()): Run[] {
+    if (!this.budgetAvailable()) return [];
+
+    return this.transaction(() => {
+      const claimed: Run[] = [];
+
+      for (const job of this.jobs()) {
+        if (
+          !job.enabled ||
+          job.trigger !== "source_updates" ||
+          this.recoverRuns().length >= 2 ||
+          this.recoverRuns().some((run) => run.jobId === job.id)
+        )
+          continue;
+
+        if (this.get("job.eventRetryAt:" + job.id, 0) > now) continue;
+
+        const refs = job.sources
+          .filter((source) => source.kind === "telegram")
+          .flatMap((source) => {
+            const record = this.sources().find(
+              (record) =>
+                record.reference === source.reference || record.aliases.includes(source.reference),
+            );
+
+            return record && record.monitoring ? [record.reference, ...record.aliases] : [];
+          });
+
+        if (!refs.length) continue;
+
+        const rows = this.db
+          .prepare(
+            `SELECT seq,received_at,source,message_id,data FROM source_updates WHERE seq>? AND source IN (${refs.map(() => "?").join(",")}) ORDER BY seq LIMIT 50`,
+          )
+          .all(this.get("job.eventCursor:" + job.id, 0), ...refs) as any[];
+
+        if (!rows.length || rows[0].received_at + 15000 > now) continue;
+
+        const end = rows.at(-1).seq;
+        const id = createHash("sha256")
+          .update(
+            `event:${job.id}:${job.version}:${end}:${this.get("job.eventAttempt:" + job.id, 0)}`,
+          )
+          .digest("hex");
+        const lastDue = Number(
+          (
+            this.db
+              .prepare("SELECT COALESCE(MAX(due),0) AS due FROM runs WHERE job_id=?")
+              .get(job.id) as any
+          ).due,
+        );
+        const due = Math.max(now, lastDue + 1);
+
+        this.db
+          .prepare("INSERT OR IGNORE INTO runs VALUES(?,?,?,?,?,?,NULL)")
+          .run(id, job.id, job.version, due, "claimed", now + 600000);
+        this.set("run.eventEnd:" + id, end);
+        this.set(
+          "run.sourceChanges:" + id,
+          rows.map((row) => ({ source: row.source, messageId: row.message_id })),
+        );
+        this.set(
+          "run.eventMessages:" + id,
+          rows.map((row) => ({ source: row.source, message: JSON.parse(row.data) })),
+        );
+        this.set("run.mode:" + id, "updates");
+        claimed.push(this.run(id));
+      }
+
+      return claimed;
+    });
   }
 
   close() {
@@ -152,6 +287,10 @@ export class Store {
       .run(key, data.channelId, JSON.stringify(data), due);
     this.event("job.saved", { id: key });
 
+    this.registerJobSources(data);
+
+    if (!old) this.set("job.eventCursor:" + key, this.latestSourceSequence());
+
     return this.job(key);
   }
 
@@ -200,7 +339,7 @@ export class Store {
         )
           break;
 
-        if (!j.enabled || j.nextDue > now) continue;
+        if (!j.enabled || j.trigger === "source_updates" || j.nextDue > now) continue;
 
         const active = this.db
           .prepare("SELECT id FROM runs WHERE job_id=? AND status IN ('claimed','running')")
@@ -291,6 +430,28 @@ export class Store {
       ) {
         this.queueCorrection(run.jobId, this.get<SourceChange[]>("run.sourceChanges:" + id, []));
         this.set("correction.retryAt:" + run.jobId, Date.now() + 60000);
+      }
+
+      const end = this.get("run.eventEnd:" + id, 0);
+
+      if (end && ["completed", "skipped"].includes(status)) {
+        this.set(
+          "job.eventCursor:" + run.jobId,
+          Math.max(end, this.get("job.eventCursor:" + run.jobId, 0)),
+        );
+        this.set("job.eventAttempt:" + run.jobId, 0);
+      } else if (
+        end &&
+        ["failed", "cancelled"].includes(status) &&
+        ["running", "claimed"].includes(run.status)
+      ) {
+        const attempt = this.get("job.eventAttempt:" + run.jobId, 0) + 1;
+
+        this.set("job.eventAttempt:" + run.jobId, attempt);
+        this.set(
+          "job.eventRetryAt:" + run.jobId,
+          Date.now() + Math.min(600000, 30000 * 2 ** Math.min(attempt, 5)),
+        );
       }
 
       this.db
@@ -437,8 +598,17 @@ export class Store {
       .run(status, id);
   }
 
-  source(source: string, messages: any[], cursor?: number) {
+  source(source: string, messages: any[], cursor?: number, bootstrap = false) {
     return this.transaction(() => {
+      const record = this.sources().find(
+        (record) =>
+          record.reference === source ||
+          record.aliases.includes(source) ||
+          record.chatId === source,
+      );
+
+      if (record) source = record.reference;
+
       const changed: number[] = [];
       const prior = this.db.prepare(
         "SELECT data FROM source_messages WHERE source=? AND message_id=?",
@@ -447,6 +617,16 @@ export class Store {
       for (const m of messages) {
         const row = prior.get(source, m.id) as { data: string } | undefined;
         const old = row ? JSON.parse(row.data) : undefined;
+
+        if (!bootstrap && JSON.stringify(old) !== JSON.stringify(m)) {
+          const revision = createHash("sha256").update(JSON.stringify(m)).digest("hex");
+
+          this.db
+            .prepare(
+              "INSERT OR IGNORE INTO source_updates(source,message_id,revision,data,received_at) VALUES(?,?,?,?,?)",
+            )
+            .run(source, m.id, revision, JSON.stringify(m), Date.now());
+        }
 
         if (old && (old.text !== m.text || Boolean(old.deleted) !== Boolean(m.deleted)))
           changed.push(m.id);
@@ -468,7 +648,13 @@ export class Store {
 
       if (changed.length) {
         for (const j of this.jobs())
-          if (j.sources.some((src) => src.kind === "telegram" && src.reference === source))
+          if (
+            j.sources.some(
+              (src) =>
+                src.kind === "telegram" &&
+                (src.reference === source || record?.aliases.includes(src.reference)),
+            )
+          )
             this.queueCorrection(
               j.id,
               changed.map((messageId) => ({ source, messageId })),
@@ -492,6 +678,14 @@ export class Store {
   }
 
   sourceMessages(source: string, ids?: number[]) {
+    source =
+      this.sources().find(
+        (record) =>
+          record.reference === source ||
+          record.aliases.includes(source) ||
+          record.chatId === source,
+      )?.reference ?? source;
+
     if (ids) {
       const statement = this.db.prepare(
         "SELECT data FROM source_messages WHERE source=? AND message_id=?",
