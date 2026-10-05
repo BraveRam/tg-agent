@@ -6,7 +6,6 @@ import { join } from "node:path";
 
 import { executeTelegramApi, type ApiTransport } from "../agent/lib/telegram-api";
 import { ownerJoinReferences } from "../agent/lib/source-authorization";
-import { telegramParameterErrors } from "../agent/lib/telegram-schema";
 import { Store } from "../agent/lib/store";
 
 function fixture() {
@@ -157,6 +156,18 @@ test("generic API enforces private ownership, runtime protection, nested targets
     );
     await assert.rejects(
       executeTelegramApi(
+        {
+          method: "setMyCommands",
+          params: { commands: [], scope: JSON.stringify({ type: "chat", chat_id: "999" }) },
+        },
+        f.ctx,
+        f.s,
+        transport,
+      ),
+      /not registered/,
+    );
+    await assert.rejects(
+      executeTelegramApi(
         { method: "getUserProfilePhotos", params: { user_id: 999 } },
         f.ctx,
         f.s,
@@ -243,6 +254,8 @@ test("generic API uploads albums and thumbnails, downloads privately, and preser
     const rate = await executeTelegramApi(mutation, rateCtx, f.s, flood);
 
     assert.equal(rate.status, "failed");
+    assert.equal(rate.errorCode, 429);
+    assert.deepEqual(rate.parameters, { retry_after: 10 });
     assert.equal(rate.retryAfter, 10);
     assert.equal((await executeTelegramApi(mutation, rateCtx, f.s, failed)).status, "failed");
     assert.equal(attempts, 1);
@@ -311,48 +324,52 @@ test("channel join grants come only from explicit owner text naming the source",
   assert.deepEqual(ownerJoinReferences("Join @source", true), []);
 });
 
-test("method discovery and rejected quiz calls recover before any send or journal claim", async () => {
+test("Telegram rejects parameters directly and corrected calls retain replay protection", async () => {
   const f = fixture();
-  let sends = 0;
-  const transport: ApiTransport = async () => {
-    sends++;
+  let requests = 0;
+  const invalid = {
+    method: "sendPoll",
+    params: {
+      chat_id: "-1001",
+      question: "Powerhouse of the cell?",
+      type: "quiz",
+      options: ["Ribosome", "Mitochondrion"],
+      correct_option_id: 1,
+    },
+  };
+  const transport: ApiTransport = async (_url, init) => {
+    requests++;
+
+    const params = JSON.parse(String(init?.body));
+
+    if (requests === 1) {
+      assert.deepEqual(params, invalid.params);
+
+      return Response.json(
+        {
+          ok: false,
+          error_code: 400,
+          description: "Bad Request: can't parse options: expected an Object; test-credential",
+          parameters: { migrate_to_chat_id: -1001, token: "test-credential" },
+        },
+        { status: 400 },
+      );
+    }
+
+    assert.deepEqual(params.correct_option_ids, [1]);
+    assert.deepEqual(params.options, [{ text: "Ribosome" }, { text: "Mitochondrion" }]);
 
     return Response.json({ ok: true, result: { message_id: 91 } });
   };
 
   try {
-    const schema: any = await executeTelegramApi(
-      { action: "describe", method: "sendPoll", params: {} },
-      f.ctx,
-      f.s,
-      transport,
-    );
+    const failed = await executeTelegramApi(invalid, f.ctx, f.s, transport);
 
-    assert.equal(sends, 0);
-    assert.equal(schema.parameters.correct_option_ids.type, "Array of Integer");
-    assert.equal(schema.definitions.InputPollOption.fields.text.required, true);
-    assert.equal(f.s.get("telegram-api:api:call", null), null);
-
-    const invalid = {
-      method: "sendPoll",
-      params: {
-        chat_id: "-1001",
-        question: "Powerhouse of the cell?",
-        type: "quiz",
-        options: ["Ribosome", "Mitochondrion"],
-        correct_option_id: 1,
-      },
-    };
-
-    await assert.rejects(executeTelegramApi(invalid, f.ctx, f.s, transport), (error: any) => {
-      assert.match(error.message, /request not sent/);
-      assert.match(error.message, /correct_option_id: unknown parameter; use correct_option_ids/);
-      assert.match(error.message, /options\[0\]: expected InputPollOption object/);
-
-      return true;
-    });
-    assert.equal(sends, 0);
-    assert.equal(f.s.get("telegram-api:api:call", null), null);
+    assert.equal(failed.status, "failed");
+    assert.equal(failed.errorCode, 400);
+    assert.equal(failed.error, "Bad Request: can't parse options: expected an Object; [redacted]");
+    assert.deepEqual(failed.parameters, { migrate_to_chat_id: -1001, token: "[redacted]" });
+    assert.equal(requests, 1);
 
     const corrected = {
       method: "sendPoll",
@@ -364,57 +381,38 @@ test("method discovery and rejected quiz calls recover before any send or journa
         correct_option_ids: [1],
       },
     };
+    const nextCall = { ...f.ctx, callId: "corrected" };
 
-    assert.equal((await executeTelegramApi(corrected, f.ctx, f.s, transport)).status, "sent");
-    await executeTelegramApi(corrected, f.ctx, f.s, transport);
-    assert.equal(sends, 1);
+    assert.equal((await executeTelegramApi(corrected, nextCall, f.s, transport)).status, "sent");
+    await executeTelegramApi(corrected, nextCall, f.s, transport);
+    assert.equal(requests, 2);
   } finally {
     f.cleanup();
   }
 });
 
-test("method schemas validate required fields, primitive types and discriminated nested objects", () => {
-  assert.ok(
-    telegramParameterErrors("sendMessage", { chat_id: "-1001" }).some((error) =>
-      /text: required/.test(error),
-    ),
-  );
-  assert.ok(
-    telegramParameterErrors("sendPoll", {
-      chat_id: "-1001",
-      question: "Quiz?",
-      options: [{ text: 42 }],
-      type: "quiz",
-      correct_option_ids: ["1"],
-    }).some((error) => /options\[0\].text: expected String/.test(error)),
-  );
-  assert.ok(
-    telegramParameterErrors("sendPoll", {
-      chat_id: "-1001",
-      question: "Quiz?",
-      options: [{ text: "Yes" }],
-      type: "quiz",
-      correct_option_ids: ["1"],
-    }).some((error) => /correct_option_ids\[0\]: expected Integer/.test(error)),
-  );
-  assert.ok(
-    telegramParameterErrors("sendMediaGroup", {
-      chat_id: "-1001",
-      media: [{ type: "video", media: "file-id", width: "wide" }],
-    }).some((error) => /media\[0\].width: expected Integer/.test(error)),
-  );
-  assert.ok(
-    telegramParameterErrors("setMyCommands", {
-      commands: [],
-      scope: { type: "chat" },
-    }).some((error) => /scope.chat_id: required/.test(error)),
-  );
-  assert.deepEqual(
-    telegramParameterErrors("sendMessage", {
-      chat_id: "-1001",
-      text: "Hello",
-      reply_markup: { inline_keyboard: [[{ text: "Open", url: "https://example.com" }]] },
-    }),
-    [],
-  );
+test("new optional and nested parameters reach Telegram without a local schema", async () => {
+  const f = fixture();
+  const params = {
+    chat_id: "-1001",
+    text: "Hello",
+    future_parameter: { future_nested_field: true },
+  };
+
+  try {
+    const result = await executeTelegramApi(
+      { method: "sendMessage", params },
+      f.ctx,
+      f.s,
+      async (_url, init) => {
+        assert.deepEqual(JSON.parse(String(init?.body)), params);
+
+        return Response.json({ ok: true, result: { message_id: 92 } });
+      },
+    );
+
+    assert.equal(result.status, "sent");
+  } finally {
+    f.cleanup();
+  }
 });

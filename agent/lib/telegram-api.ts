@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 
 import type { ToolContext } from "eve/tools";
 
-import { telegramMethod, describeTelegramMethod, telegramParameterErrors } from "./telegram-schema";
+import methods from "./bot-methods";
 import { config } from "./config";
 import { activityText } from "./activity";
 import { requireControl } from "./security";
@@ -12,7 +12,6 @@ import { bot, TelegramError } from "./telegram";
 export type ApiTransport = (url: string, init?: RequestInit) => Promise<Response>;
 
 export interface ApiInput {
-  action?: "call" | "describe";
   method: string;
   params: Record<string, unknown>;
   files?: Record<string, { path: string; filename?: string; contentType?: string }>;
@@ -49,17 +48,8 @@ export async function executeTelegramApi(
 
   const { method } = input;
 
-  if (!telegramMethod(method) || blocked.has(method.toLowerCase()))
+  if (!methods.has(method) || blocked.has(method.toLowerCase()))
     throw new Error("Unknown or application-owned Bot API method");
-
-  if (input.action === "describe") return describeTelegramMethod(method);
-
-  const errors = telegramParameterErrors(method, input.params);
-
-  if (errors.length)
-    throw new Error(
-      `Invalid ${method} parameters; request not sent. Correct these fields and retry, or inspect telegram_api with action=describe:\n${errors.join("\n")}`,
-    );
 
   const params: any = structuredClone(input.params);
   const destinations = new Set([
@@ -80,7 +70,21 @@ export async function executeTelegramApi(
   async function targets(value: any) {
     if (!value || typeof value !== "object") return;
 
-    for (const [key, item] of Object.entries(value)) {
+    for (const [key, original] of Object.entries(value)) {
+      let item = original;
+
+      // Telegram accepts serialized JSON for these scopes. Inspect it before authorizing targets.
+      if (
+        ["scope", "reply_parameters", "ephemeral_message_parameters"].includes(key) &&
+        typeof item === "string"
+      ) {
+        try {
+          item = value[key] = JSON.parse(item);
+        } catch {
+          // Invalid JSON cannot authorize an action; Telegram will return its parse error.
+        }
+      }
+
       if (opaque.test(key)) throw new Error("Indirect target cannot be verified");
 
       if (key.endsWith("chat_id")) {
@@ -189,6 +193,8 @@ export async function executeTelegramApi(
 
   if (claimed) return claimed;
 
+  let telegramFailure: Record<string, unknown> = {};
+
   try {
     let response: Response;
 
@@ -213,12 +219,20 @@ export async function executeTelegramApi(
       throw new TelegramError("Unreadable Telegram response", true);
     }
 
-    if (!payload.ok)
+    if (!payload.ok) {
+      telegramFailure = JSON.parse(
+        activityText({
+          errorCode: payload.error_code ?? response.status,
+          parameters: payload.parameters ?? {},
+        }),
+      );
+
       throw new TelegramError(
         activityText(payload.description ?? "Telegram rejected request"),
         response.status >= 500,
         payload.parameters?.retry_after ?? 0,
       );
+    }
 
     let result = JSON.parse(activityText(payload.result));
 
@@ -257,6 +271,7 @@ export async function executeTelegramApi(
     const uncertain = !readOnly && (!(error instanceof TelegramError) || error.ambiguous);
     const saved = {
       status: uncertain ? "uncertain" : "failed",
+      ...telegramFailure,
       error: activityText(
         error instanceof TelegramError ? error.message : "Telegram operation failed",
       ),
