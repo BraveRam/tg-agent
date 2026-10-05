@@ -124,6 +124,7 @@ async function dispatch() {
       if (s.budgetAvailable()) {
         await correctionRuns();
         s.claimDue();
+        s.claimEventJobs();
       } else
         await notify(
           `Background model work paused. Recorded model spending: $${s.spent().toFixed(2)} / $${s.budget().toFixed(2)}${s.get("budget.unpriced", false) ? ". A model step returned no price." : ""}. Owner chat remains available.`,

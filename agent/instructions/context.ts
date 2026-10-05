@@ -33,6 +33,7 @@ export default defineDynamic({
           content: `Application-owned job context (configuration, not source material): ${JSON.stringify(
             {
               runId: id,
+              eventBatch: s.get("run.eventMessages:" + id, []),
               job,
               channel,
               previousPosts: previousPosts.map((p) => ({

@@ -53,6 +53,7 @@ export default defineChannel({
       const body = z
         .object({
           source: z.string(),
+          bootstrap: z.boolean().optional(),
           cursor: z.number().int().nonnegative().optional(),
           messages: z.array(
             z
@@ -63,9 +64,25 @@ export default defineChannel({
         .parse(await request.json());
       const s = store();
 
-      s.source(body.source, body.messages, body.cursor);
+      s.source(body.source, body.messages, body.cursor, body.bootstrap);
 
       return Response.json({ ok: true });
+    }),
+    POST("/internal/source-state", async (request) => {
+      if (!internalRequest(request)) return new Response("Unauthorized", { status: 401 });
+
+      const body = z
+        .object({
+          reference: z.string(),
+          chatId: z.string().optional(),
+          aliases: z.array(z.string()).optional(),
+          membership: z
+            .enum(["unknown", "joining", "awaiting_approval", "joined", "failed"])
+            .optional(),
+        })
+        .parse(await request.json());
+
+      return Response.json(store().saveSource(body));
     }),
     GET("/internal/sources", async (request) => {
       if (!internalRequest(request)) return new Response("Unauthorized", { status: 401 });
@@ -73,35 +90,32 @@ export default defineChannel({
       const s = store();
 
       return Response.json({
-        sources: [
-          ...new Set(
-            s
-              .jobs()
-              .filter((j) => j.enabled)
-              .flatMap((j) =>
-                j.sources.filter((src) => src.kind === "telegram").map((src) => src.reference),
+        sources: s
+          .sources()
+          .filter((record) => record.monitoring)
+          .map((record) => ({
+            chatId: record.chatId,
+            membership: record.membership,
+
+            source: record.reference,
+            cursor: s.get("source.cursor:" + record.reference, 0),
+            trackedIds: [
+              ...new Set(
+                s
+                  .publications()
+                  .flatMap((p) =>
+                    p.evidence
+                      .filter(
+                        (e) =>
+                          e.sourceMessageId &&
+                          (e.sourceChatId === record.reference ||
+                            e.url.includes("t.me/" + record.reference.replace("@", "") + "/")),
+                      )
+                      .map((e) => e.sourceMessageId!),
+                  ),
               ),
-          ),
-        ].map((source) => ({
-          source,
-          cursor: s.get("source.cursor:" + source, 0),
-          trackedIds: [
-            ...new Set(
-              s
-                .publications()
-                .flatMap((p) =>
-                  p.evidence
-                    .filter(
-                      (e) =>
-                        e.sourceMessageId &&
-                        (e.sourceChatId === source ||
-                          e.url.includes("t.me/" + source.replace("@", "") + "/")),
-                    )
-                    .map((e) => e.sourceMessageId!),
-                ),
-            ),
-          ],
-        })),
+            ],
+          })),
       });
     }),
   ],

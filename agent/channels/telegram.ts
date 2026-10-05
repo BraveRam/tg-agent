@@ -1,5 +1,6 @@
 import { telegramChannel } from "eve/channels/telegram";
 
+import { ownerJoinReferences } from "../lib/source-authorization";
 import { config } from "../lib/config";
 
 export default telegramChannel({
@@ -26,7 +27,13 @@ export default telegramChannel({
         authenticator: "telegram",
         principalId: config().ownerId,
         principalType: "user" as const,
-        attributes: { privateChat: "true" },
+        attributes: {
+          privateChat: "true",
+          joinReferences: ownerJoinReferences(
+            message.text || message.caption,
+            !!message.raw.forward_origin,
+          ),
+        },
       },
       title: "Owner conversation",
     };

@@ -9,6 +9,7 @@ import jobs from "../agent/tools/jobs";
 import memory from "../agent/memory/profile";
 import context from "../agent/instructions/context";
 import publications from "../agent/tools/publications";
+import sources from "../agent/tools/sources";
 
 const dir = mkdtempSync(join(tmpdir(), "tg-tools-"));
 
@@ -54,6 +55,53 @@ test("job executor preserves twice-daily schedules and always-trusted sources on
 test("memory is scoped and backend is configured", () => {
   assert.equal(memory.scope!({ session: { auth: { current: null } } } as any), null);
   assert.equal(memory.scope!(ctx), "owner");
+});
+
+test("source executor requires a trusted owner grant for the requested channel", async () => {
+  const previousOwner = process.env.TELEGRAM_OWNER_ID;
+
+  process.env.TELEGRAM_OWNER_ID = "12345";
+
+  const owner: any = {
+    session: {
+      id: "source-owner",
+      auth: {
+        current: {
+          authenticator: "telegram",
+          principalType: "user",
+          principalId: "12345",
+          attributes: { privateChat: "true", joinReferences: [] },
+        },
+      },
+    },
+  };
+
+  try {
+    await assert.rejects(
+      Promise.resolve(sources.execute!({ action: "monitor", reference: "@source" }, owner)),
+      /explicitly join or monitor/,
+    );
+    assert.equal(
+      store()
+        .sources()
+        .find((source) => source.reference === "@source")?.membership,
+      "unknown",
+    );
+    store().saveSource({ reference: "@source", membership: "joined", monitoring: false });
+    owner.session.auth.current.attributes.joinReferences = ["@source"];
+
+    const saved: any = await sources.execute!({ action: "monitor", reference: "@source" }, owner);
+
+    assert.equal(saved.monitoring, true);
+    assert.equal(saved.membership, "joined");
+    await assert.rejects(
+      Promise.resolve(sources.execute!({ action: "join", reference: "@other" }, owner)),
+      /explicitly join or monitor/,
+    );
+  } finally {
+    if (previousOwner === undefined) delete process.env.TELEGRAM_OWNER_ID;
+    else process.env.TELEGRAM_OWNER_ID = previousOwner;
+  }
 });
 
 test("source contents cannot authorize a scheduled job to mutate configuration", async () => {

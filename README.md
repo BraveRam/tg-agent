@@ -67,3 +67,13 @@ Eve is pinned to 0.70.0. The official `@agent-browser/eve` 0.38.2 registry packa
 `patches/eve@0.70.0.patch` adds shared SELinux labeling to Eve's read-only Docker resource mount, required on Fedora. It affects only generated sandbox resources. Bun uses a hoisted dependency layout so the patched framework resolves its runtime dependencies. Run `bun run format` after changes.
 
 This release is local and single-owner. Deployment, customer accounts, signed-in website browsing, and second-level schedules are outside its scope.
+
+### General Telegram access and live sources
+
+`telegram_api` accepts an official Bot API method and parameters in owner-private conversations. Destinations are limited to the owner and registered channels; source references, user targets and nested chat scopes are checked independently. Indirect targets that cannot be proven are rejected. Polling, webhooks and bot shutdown remain application-owned. Sandbox files can be attached through `files`; `getFile` can download into the sandbox. Credentials never enter the sandbox or tool results. Mutations are journaled and ambiguous responses are not resent.
+
+The `sources` tool joins and monitors channels only on owner request, and can stop monitoring without leaving. The userbot uses short-lived signed read scopes; personal chats, unrelated groups and autonomous joins are excluded. `source_media` copies permitted media into the current sandbox. New events are saved in a separate worker SQLite inbox and forwarded until acknowledged.
+
+Jobs accept `trigger: "scheduled" | "source_updates"`. Existing jobs remain scheduled. Source-update jobs use fixed 15-second batches, at most 50 revisions per run, one active run per job, and the existing two-run concurrency and daily budget limits. Failed batches remain pending with bounded backoff; pausing prevents sends. Joining caches recent history without posting it. Telegram deletion notifications remain best effort; published evidence is periodically rechecked.
+
+Live monitoring acceptance: start from an authorized disposable channel and run `TG_MONITOR_TEST_CHANNEL=@channel node_modules/node/bin/node --env-file=.env.local --import tsx scripts/telegram-monitor-acceptance.ts`. It uses an isolated ledger and copied login session, joins the channel, checks new/edit/delete updates, and removes its post. Membership is retained.

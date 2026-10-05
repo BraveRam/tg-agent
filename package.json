@@ -21,6 +21,7 @@
     "format:check": "bun run format:spacing:check && prettier --check --ignore-unknown --no-error-on-unmatched-pattern agent scripts tests evals package.json tsconfig.json .prettierrc.json",
     "postinstall": "bun run build:browser",
     "test:python": ".venv/bin/python -m unittest userbot.test_app",
+    "test:monitor": "node_modules/node/bin/node --import tsx scripts/telegram-monitor-acceptance.ts",
     "test:telegram": "node_modules/node/bin/node --import tsx scripts/telegram-acceptance.ts",
     "format:python": "uv tool run --from ruff==0.15.9 ruff format userbot",
     "format:python:check": "uv tool run --from ruff==0.15.9 ruff format --check userbot",

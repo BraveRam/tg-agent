@@ -34,6 +34,8 @@ export function requirePrivateControl(ctx: any) {
     ctx.session.parent
   )
     throw new Error("Only the owner's private Telegram conversation may use this capability");
+
+  return auth;
 }
 
 export async function executeTelegramApi(

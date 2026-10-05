@@ -1,18 +1,29 @@
 """Trusted, loopback-only Telegram reader. Never sends messages as the user account."""
 
 import asyncio
+import base64
+import hashlib
+import json
+import sqlite3
+import time
 import contextlib
 import hmac
 import os
 import uuid
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from typing import Annotated
 
 import httpx
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel, Field
-from telethon import TelegramClient, events, errors, utils
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from telethon import TelegramClient, events, errors, utils, types
+from telethon.tl.functions.channels import JoinChannelRequest, GetFullChannelRequest
+from telethon.tl.functions.messages import (
+    CheckChatInviteRequest,
+    ImportChatInviteRequest,
+)
 
 DATA = Path(os.environ.get("TG_DATA_DIR", ".data")).resolve()
 DATA.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -28,11 +39,122 @@ client = TelegramClient(
 )
 source_map: dict[int, str] = {}
 source_health: dict[str, str] = {}
+forward_lock = asyncio.Lock()
+bearer = HTTPBearer(auto_error=False)
 
 
-async def authorize(authorization: Annotated[str | None, Header()] = None):
-    if not TOKEN or not hmac.compare_digest(authorization or "", "Bearer " + TOKEN):
+def unbase64(value):
+    return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+
+
+async def authorize(
+    authorization: Annotated[
+        HTTPAuthorizationCredentials | None, Depends(bearer)
+    ] = None,
+):
+    if not TOKEN:
         raise HTTPException(401, "Unauthorized")
+    credential = (
+        authorization.removeprefix("Bearer ")
+        if isinstance(authorization, str)
+        else (authorization.credentials if authorization else "")
+    )
+    if hmac.compare_digest(credential, TOKEN):
+        return {"internal": True}
+    try:
+        body, signature = credential.split(".")
+        expected = hmac.new(TOKEN.encode(), body.encode(), hashlib.sha256).digest()
+        if not hmac.compare_digest(unbase64(signature), expected):
+            raise ValueError()
+        scope = json.loads(unbase64(body))
+        if scope["exp"] < time.time() or scope["exp"] > time.time() + 310:
+            raise ValueError()
+        return scope
+    except (ValueError, KeyError, TypeError, json.JSONDecodeError):
+        raise HTTPException(401, "Unauthorized") from None
+
+
+async def channel_peer(reference, scope):
+    peer = await entity(reference)
+    if not isinstance(peer, types.Channel) or not peer.broadcast:
+        raise HTTPException(403, "Only configured broadcast channels may be read")
+    allowed = scope.get("channels", [])
+    if (
+        not scope.get("internal")
+        and reference not in allowed
+        and str(utils.get_peer_id(peer)) not in allowed
+    ):
+        raise HTTPException(403, "Channel outside caller scope")
+    return peer
+
+
+@contextmanager
+def inbox():
+    db = sqlite3.connect(DATA / "userbot-inbox.sqlite", timeout=5)
+    db.execute("PRAGMA journal_mode=WAL")
+    db.execute(
+        "CREATE TABLE IF NOT EXISTS pending(id TEXT PRIMARY KEY,body TEXT NOT NULL,attempts INTEGER NOT NULL DEFAULT 0,retry_at REAL NOT NULL DEFAULT 0)"
+    )
+    try:
+        yield db
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+async def forward_pending():
+    async with forward_lock:
+        await _forward_pending()
+
+
+async def _forward_pending():
+    with inbox() as db:
+        rows = db.execute(
+            "SELECT id,body,attempts,retry_at FROM pending ORDER BY rowid LIMIT 100", ()
+        ).fetchall()
+    for key, payload, attempts, retry_at in rows:
+        if retry_at > time.time():
+            return
+        try:
+            async with httpx.AsyncClient(timeout=30) as http:
+                response = await http.post(
+                    EVE_URL + "/internal/sources",
+                    headers={"Authorization": "Bearer " + TOKEN},
+                    json=json.loads(payload),
+                )
+                response.raise_for_status()
+            with inbox() as db:
+                db.execute("DELETE FROM pending WHERE id=?", (key,))
+        except Exception:
+            with inbox() as db:
+                db.execute(
+                    "UPDATE pending SET attempts=attempts+1,retry_at=? WHERE id=?",
+                    (time.time() + min(300, 2 ** min(attempts + 1, 8)), key),
+                )
+            raise
+
+
+async def delivery_loop():
+    while True:
+        try:
+            await forward_pending()
+            source_health["delivery"] = "ready"
+        except Exception:
+            source_health["delivery"] = "degraded"
+        await asyncio.sleep(2)
+
+
+async def report_source(reference, **fields):
+    async with httpx.AsyncClient(timeout=30) as http:
+        response = await http.post(
+            EVE_URL + "/internal/source-state",
+            headers={"Authorization": "Bearer " + TOKEN},
+            json={"reference": reference, **fields},
+        )
+        response.raise_for_status()
 
 
 async def rpc(operation):
@@ -60,23 +182,26 @@ def serialize(message):
         "text": message.raw_text or "",
         "date": message.date.timestamp(),
         "editedAt": message.edit_date.timestamp() if message.edit_date else None,
-        "hasMedia": bool(message.photo),
+        "hasMedia": bool(message.photo or getattr(message, "document", None)),
         "groupedId": str(message.grouped_id) if message.grouped_id else None,
         "protected": bool(message.noforwards),
     }
 
 
-async def ingest(source, messages, cursor=None):
+async def ingest(source, messages, cursor=None, bootstrap=False):
     body = {"source": source, "messages": messages}
     if cursor is not None:
         body["cursor"] = cursor
-    async with httpx.AsyncClient(timeout=30) as http:
-        response = await http.post(
-            EVE_URL + "/internal/sources",
-            headers={"Authorization": "Bearer " + TOKEN},
-            json=body,
-        )
-        response.raise_for_status()
+    if bootstrap:
+        body["bootstrap"] = True
+    payload = json.dumps(body, sort_keys=True)
+    key = hashlib.sha256(payload.encode()).hexdigest()
+    with inbox() as db:
+        db.execute("INSERT OR IGNORE INTO pending(id,body) VALUES(?,?)", (key, payload))
+    await forward_pending()
+    with inbox() as db:
+        if db.execute("SELECT 1 FROM pending WHERE id=?", (key,)).fetchone():
+            raise HTTPException(503, "Update queued for delivery")
 
 
 async def on_message(event):
@@ -101,7 +226,15 @@ async def on_deleted(event):
 
 
 async def scan(entry):
-    peer = await entity(entry["source"])
+    peer = await entity(entry.get("chatId") or entry["source"])
+    if not isinstance(peer, types.Channel) or not peer.broadcast:
+        raise HTTPException(403, "Only broadcast channels may be monitored")
+    await report_source(
+        entry["source"],
+        chatId=str(utils.get_peer_id(peer)),
+        membership="unknown" if peer.left else "joined",
+        aliases=["@" + peer.username] if peer.username else [],
+    )
     source_map[utils.get_peer_id(peer)] = entry["source"]
     if entry["cursor"]:
         batch = []
@@ -125,6 +258,7 @@ async def scan(entry):
         cursor=max((m["id"] for m in recent), default=0)
         if not entry["cursor"]
         else None,
+        bootstrap=not bool(entry["cursor"]),
     )
     tracked_ids = list(dict.fromkeys(entry.get("trackedIds", [])))
     for start in range(0, len(tracked_ids), 100):
@@ -157,6 +291,15 @@ async def collect():
                     del source_map[chat_id]
             for entry in sources:
                 try:
+                    if entry.get("membership") == "awaiting_approval":
+                        invite = entry["source"].split("/")[-1].removeprefix("+")
+                        checked = await rpc(client(CheckChatInviteRequest(invite)))
+                        if not isinstance(checked, types.ChatInviteAlready):
+                            continue
+                        entry["chatId"] = str(utils.get_peer_id(checked.chat))
+                        await report_source(
+                            entry["source"], chatId=entry["chatId"], membership="joined"
+                        )
                     await scan(entry)
                 except HTTPException as exc:
                     source_health[entry["source"]] = "degraded"
@@ -185,12 +328,16 @@ async def lifespan(app):
     client.add_event_handler(on_message, events.MessageEdited())
     client.add_event_handler(on_deleted, events.MessageDeleted())
     task = asyncio.create_task(collect())
+    delivery = asyncio.create_task(delivery_loop())
     try:
         yield
     finally:
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
+        delivery.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await delivery
         await client.disconnect()
 
 
@@ -208,6 +355,10 @@ class ChannelRequest(BaseModel):
 class MessagesRequest(ChannelRequest):
     ids: list[int] | None = Field(default=None, max_length=100)
     limit: int = Field(default=30, ge=1, le=100)
+    beforeId: int = Field(default=0, ge=0)
+    afterId: int = Field(default=0, ge=0)
+    beforeDate: float | None = None
+    afterDate: float | None = None
 
 
 class MediaRequest(ChannelRequest):
@@ -224,35 +375,120 @@ async def health():
 
 
 @app.post("/resolve", operation_id="resolveChannel")
-async def resolve(body: ChannelRequest):
-    peer = await entity(body.channel)
+async def resolve(body: ChannelRequest, scope=Depends(authorize)):
+    peer = await channel_peer(body.channel, scope)
     return {
         "chatId": str(utils.get_peer_id(peer)),
         "name": getattr(peer, "title", ""),
         "username": getattr(peer, "username", None),
+        "description": getattr(
+            (await rpc(client(GetFullChannelRequest(peer)))).full_chat, "about", ""
+        ),
     }
 
 
 @app.post("/messages", operation_id="readMessages")
-async def messages(body: MessagesRequest):
-    peer = await entity(body.channel)
-    result = await rpc(client.get_messages(peer, ids=body.ids, limit=body.limit))
-    return {"messages": [serialize(m) for m in result if m]}
+async def messages(body: MessagesRequest, scope=Depends(authorize)):
+    from datetime import datetime, timezone
+
+    peer = await channel_peer(body.channel, scope)
+    options = (
+        {"ids": body.ids}
+        if body.ids
+        else {
+            "limit": body.limit,
+            "offset_id": body.beforeId,
+            "min_id": body.afterId,
+            "offset_date": datetime.fromtimestamp(body.beforeDate, timezone.utc)
+            if body.beforeDate
+            else None,
+        }
+    )
+    result = await rpc(client.get_messages(peer, **options))
+    items = [
+        serialize(m)
+        for m in result
+        if m and (body.afterDate is None or m.date.timestamp() >= body.afterDate)
+    ]
+    return {
+        "messages": items,
+        "nextBeforeId": min((m.id for m in result if m), default=None),
+    }
 
 
 @app.post("/media", operation_id="retrievePhoto")
-async def media(body: MediaRequest):
-    peer = await entity(body.channel)
+async def media(body: MediaRequest, scope=Depends(authorize)):
+    peer = await channel_peer(body.channel, scope)
     message = await rpc(client.get_messages(peer, ids=body.messageId))
-    if not message or not message.photo or message.noforwards:
-        raise HTTPException(403, "Photo unavailable or protected")
+    if (
+        not message
+        or (not message.photo and not message.document)
+        or message.noforwards
+    ):
+        raise HTTPException(403, "Media unavailable or protected")
     directory = DATA / "media"
     directory.mkdir(mode=0o700, exist_ok=True)
-    file_id = str(uuid.uuid4()) + ".jpg"
+    extension = (
+        ".jpg" if message.photo else (getattr(message.file, "ext", None) or ".bin")
+    )
+    if not extension.removeprefix(".").isalnum():
+        extension = ".bin"
+    if message.file and message.file.size and message.file.size > 50 * 1024 * 1024:
+        raise HTTPException(413, "Media exceeds 50 MB")
+    file_id = str(uuid.uuid4()) + extension
     result = await rpc(client.download_media(message, str(directory / file_id)))
     if not result:
-        raise HTTPException(404, "No photo")
-    return {"fileId": file_id}
+        raise HTTPException(404, "No media")
+    return {
+        "fileId": file_id,
+        "mediaType": "image/jpeg"
+        if message.photo
+        else getattr(message.document, "mime_type", "application/octet-stream"),
+    }
+
+
+@app.post("/join", operation_id="joinSourceChannel")
+async def join_source(body: ChannelRequest, scope=Depends(authorize)):
+    reference = body.channel
+    if scope.get("join") != reference:
+        raise HTTPException(403, "Owner-authorized join required")
+    try:
+        if "t.me/+" in reference or "t.me/joinchat/" in reference:
+            invite = reference.split("/")[-1].removeprefix("+")
+            checked = await client(CheckChatInviteRequest(invite))
+            if isinstance(checked, types.ChatInviteAlready):
+                peer = checked.chat
+            else:
+                if not getattr(checked, "broadcast", False):
+                    raise HTTPException(403, "Only broadcast channels may be joined")
+                joined = await client(ImportChatInviteRequest(invite))
+                peer = joined.chats[0]
+        else:
+            peer = await entity(reference)
+            if not isinstance(peer, types.Channel) or not peer.broadcast:
+                raise HTTPException(403, "Only broadcast channels may be joined")
+            await client(JoinChannelRequest(peer))
+        if not isinstance(peer, types.Channel) or not peer.broadcast:
+            raise HTTPException(403, "Only broadcast channels may be joined")
+        return {
+            "chatId": str(utils.get_peer_id(peer)),
+            "aliases": ["@" + peer.username] if peer.username else [],
+            "membership": "joined",
+        }
+    except errors.InviteRequestSentError:
+        return {"membership": "awaiting_approval", "aliases": []}
+    except errors.UserAlreadyParticipantError:
+        return {
+            "chatId": str(utils.get_peer_id(peer)),
+            "membership": "joined",
+            "aliases": [],
+        }
+    except errors.FloodWaitError as exc:
+        raise HTTPException(
+            429, "Telegram flood wait", headers={"Retry-After": str(exc.seconds)}
+        ) from None
+    except errors.RPCError:
+        raise HTTPException(400, "Channel join failed or invite invalid") from None
 
 
 # FastAPI's generated OpenAPI route is not covered by global dependencies.

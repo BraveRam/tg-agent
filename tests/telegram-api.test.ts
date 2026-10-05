@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { executeTelegramApi, type ApiTransport } from "../agent/lib/telegram-api";
+import { ownerJoinReferences } from "../agent/lib/source-authorization";
 import { Store } from "../agent/lib/store";
 
 function fixture() {
@@ -297,4 +298,14 @@ test("event batches are fixed, persistent, isolated and retry without losing lat
   } finally {
     f.cleanup();
   }
+});
+
+test("channel join grants come only from explicit owner text naming the source", () => {
+  assert.deepEqual(ownerJoinReferences("Monitor https://t.me/SourceNews"), ["@sourcenews"]);
+  assert.deepEqual(ownerJoinReferences("Join https://t.me/+InviteHash"), [
+    "https://t.me/+InviteHash",
+  ]);
+  assert.deepEqual(ownerJoinReferences("Research news using @source"), []);
+  assert.deepEqual(ownerJoinReferences("Stop monitoring @source"), []);
+  assert.deepEqual(ownerJoinReferences("Join @source", true), []);
 });
