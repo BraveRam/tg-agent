@@ -205,7 +205,7 @@ try {
     channelId: destination.id,
     name: "Live acceptance",
     task: "Inspect test updates",
-    sources: [{ kind: "telegram", reference, trust: "verify" }],
+    sources: [{ kind: "telegram", reference }],
     trigger: "source_updates",
     schedule: { kind: "interval", minutes: 5 },
     freshnessHours: 24,

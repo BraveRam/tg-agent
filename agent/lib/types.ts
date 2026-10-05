@@ -21,14 +21,13 @@ export const scheduleSchema = z.discriminatedUnion("kind", [
 export const sourceSchema = z.object({
   kind: z.enum(["telegram", "web"]),
   reference: z.string().min(1),
-  trust: z.enum(["verify", "always"]).default("verify"),
 });
 
 export const channelSchema = z.object({
   chatId: z.string().regex(/^-?\d+$/),
   name: z.string().min(1),
   language: z.enum(["en", "am", "om"]),
-  style: z.string().default("Concise, natural news with source attribution."),
+  style: z.string().default("Concise, natural news."),
   timezone: timezone.default("Africa/Nairobi"),
   images: z.enum(["auto", "never", "prefer"]).default("auto"),
 });
@@ -66,26 +65,16 @@ export type Run = {
   due: number;
 };
 
-export type Evidence = {
-  url: string;
-  claim: string;
-  sourceMessageId?: number;
-  sourceChatId?: string;
-};
-
 export type Media = {
   url?: string;
   sourceChatId?: string;
   sourceMessageId?: number;
-  credit: string;
-  reuseAllowed: boolean;
 };
 
 export type Post = {
   channelId: string;
   headline: string;
   text: string;
-  evidence: Evidence[];
   media: Media[];
 };
 
@@ -96,7 +85,6 @@ export type Publication = {
   storyKey: string;
   headline: string;
   text: string;
-  evidence: Evidence[];
   media: Media[];
   messageIds: number[];
   status: string;

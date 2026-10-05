@@ -11,13 +11,9 @@ const channels = JSON.parse(process.env.TG_TEST_CHANNELS ?? "{}") as Record<stri
 
 const photo = process.env.TG_TEST_PHOTO_URL;
 
-const credit = process.env.TG_TEST_PHOTO_CREDIT;
-
-const source = process.env.TG_TEST_SOURCE_URL;
-
-if (!["en", "am", "om"].every((language) => channels[language]) || !photo || !credit || !source) {
+if (!["en", "am", "om"].every((language) => channels[language]) || !photo) {
   throw new Error(
-    "Set TG_TEST_CHANNELS JSON with en/am/om disposable channels, TG_TEST_PHOTO_URL, TG_TEST_PHOTO_CREDIT and TG_TEST_SOURCE_URL. The supplied photo must permit reuse. Start bun dev first.",
+    "Set TG_TEST_CHANNELS JSON with en/am/om disposable channels, TG_TEST_PHOTO_URL. The supplied photo must permit reuse. Start bun dev first.",
   );
 }
 
@@ -47,13 +43,7 @@ try {
           channelId: channel.id,
           headline: `${labels[language]} ${nonce}`,
           text: `${labels[language]}: tg-agent (${count} photos). ${nonce}`,
-          evidence: [
-            {
-              url: `${source}${source.includes("?") ? "&" : "?"}test=${nonce}`,
-              claim: "Explicit integration test fixture",
-            },
-          ],
-          media: Array.from({ length: count }, () => ({ url: photo, credit, reuseAllowed: true })),
+          media: Array.from({ length: count }, () => ({ url: photo })),
         },
         null,
         s,
@@ -64,7 +54,7 @@ try {
       await revisePublication(
         p.id,
         "edit",
-        "Integration test correction",
+        "Integration test edit",
         `${labels[language]}: tg-agent (edited). ${nonce}`,
         s,
       );

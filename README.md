@@ -13,7 +13,7 @@ uv pip sync --python .venv/bin/python userbot/requirements.lock
 bun dev
 ```
 
-First run asks for the AI Gateway key, BotFather bot token, your numeric Telegram account ID, and Telegram API ID/hash from https://my.telegram.org. It then logs in the dedicated userbot account using your phone, code, and optional 2FA password. Secrets stay in the local terminal and `.env.local`; do not send them through chat. The main agent and both specialists use `xiaomi/mimo-v2.6-pro` through AI Gateway with medium reasoning.
+First run asks for the AI Gateway key, BotFather bot token, your numeric Telegram account ID, and Telegram API ID/hash from https://my.telegram.org. It then logs in the dedicated userbot account using your phone, code, and optional 2FA password. Secrets stay in the local terminal and `.env.local`; do not send them through chat. The main agent and research specialist use `xiaomi/mimo-v2.6-pro` through AI Gateway with medium reasoning.
 
 The bot must be an administrator with posting, editing and deletion rights in destination channels. The dedicated user account must be able to read the source and destination channels. Send your bot a private Telegram message to start. `Ctrl+C` stops all workers. A second instance sharing the data directory cannot start.
 
@@ -30,7 +30,7 @@ While the agent works, the coordinator refreshes the owner's typing indicator ev
 Example requests:
 
 - “Post AI news to @mychannel in English every five minutes, sometimes with photos.”
-- “Use @source and always trust it. Post at 07:00 and 15:00 Nairobi time.”
+- “Use @source. Post at 07:00 and 15:00 Nairobi time.”
 - “Pause that job.”
 - “Change the channel language to Afaan Oromo.”
 - “Show jobs, spending and uncertain publications.”
@@ -45,7 +45,7 @@ The owner private chat shows interim and final assistant messages. Tool batches 
 
 The dispatcher admits at most two active jobs and one active run per job. Missed clock slots are skipped; overdue intervals perform one current check. Job edits or pauses invalidate old runs and queued sends. Publication intents are written before sending. Verification retries perform readback only. Ambiguous sends are reconciled against destination history and remain uncertain if delivery cannot be established; they are never blindly resent.
 
-Source changes queue correction reviews. Always-trusted source policies bypass independent corroboration, but source text cannot grant permissions. Scheduled jobs cannot modify settings or operate other destinations. Specialists have read-only integrations and no publishing tools. Real media needs reuse permission and credit; protected Telegram photos are rejected and text is the fallback.
+News jobs retrieve, deduplicate, translate, and publish. There is no news trust setting, independent corroboration, factual-review specialist, or automatic correction/retraction pipeline. Posts and captions are sent exactly as supplied, without appended source links or photo credits. Telegram delivery readback and uncertain-send reconciliation remain. Owner-requested edits and deletions preserve revisions. Source content cannot grant permissions; jobs stay scoped to their configured destinations and specialists cannot publish. Protected Telegram media is rejected.
 
 New Telegram sources start with their latest 50 messages. After that, ordered history scans checkpoint only acknowledged batches, so live updates cannot hide messages missed during downtime. Catch-up reads at most 500 messages per source per scan and resumes from its saved checkpoint. Tracked source posts are refreshed in batches of 100 to detect older edits and deletions. Correction runs retain the affected source IDs and publications; failed reviews are queued again after a one-minute delay.
 
@@ -66,7 +66,7 @@ bun run eval
 
 Use `bun run test`, because the implementation uses Node 24's SQLite module; Bun's own test runner does not provide it. Tests cover persistence, scheduler leases, ownership, source instruction restrictions in executors, duplicate stories, photos/albums, accepted-but-lost send responses, readback retries, paused sends, revisions and budget handling. Eve evals exercise natural-language job control with a real model and require an AI Gateway key.
 
-`bun run test:telegram` requires a running app, owner credentials, a logged-in userbot, and explicitly configured disposable channels. Set `TG_TEST_CHANNELS` to JSON with `en`, `am`, and `om` channel references, plus `TG_TEST_PHOTO_URL`, `TG_TEST_PHOTO_CREDIT`, and `TG_TEST_SOURCE_URL` for a photo you may reuse. It sends marked fixtures and verifies text, photos, albums, edits, corrections and deletions. Its ledger remains under `.data/acceptance/` for cleanup if a check fails. Confirm text, photos, albums, edits, deletions and translations in each language before relying on autonomous posting. Language skills guide generation; they do not substitute for native-speaker review.
+`bun run test:telegram` requires a running app, owner credentials, a logged-in userbot, and explicitly configured disposable channels. Set `TG_TEST_CHANNELS` to JSON with `en`, `am`, and `om` channel references, plus `TG_TEST_PHOTO_URL` for a photo you may reuse. It sends marked fixtures and verifies text, photos, albums, edits and deletions. Its ledger remains under `.data/acceptance/` for cleanup if a check fails. Confirm text, photos, albums, edits, deletions and translations in each language before relying on autonomous posting. Language skills guide generation; they do not substitute for native-speaker review.
 
 ## Compatibility
 
@@ -84,6 +84,6 @@ Telegram validates method parameters directly. The tool returns its sanitized er
 
 The `sources` tool joins and monitors channels only on owner request, and can stop monitoring without leaving. The userbot uses short-lived signed read scopes; personal chats, unrelated groups and autonomous joins are excluded. `source_media` copies permitted media into the current sandbox. New events are saved in a separate worker SQLite inbox and forwarded until acknowledged.
 
-Jobs accept `trigger: "scheduled" | "source_updates"`. Existing jobs remain scheduled. Source-update jobs use fixed 15-second batches, at most 50 revisions per run, one active run per job, and the existing two-run concurrency and daily budget limits. Failed batches remain pending with bounded backoff; pausing prevents sends. Joining caches recent history without posting it. Telegram deletion notifications remain best effort; published evidence is periodically rechecked.
+Jobs accept `trigger: "scheduled" | "source_updates"`. Existing jobs remain scheduled. Source-update jobs use fixed 15-second batches, at most 50 revisions per run, one active run per job, and the existing two-run concurrency and daily budget limits. Failed batches remain pending with bounded backoff; pausing prevents sends. Joining caches recent history without posting it. Telegram deletion notifications remain best effort; monitoring reconciles source history periodically.
 
 Live monitoring acceptance: start from an authorized disposable channel and run `TG_MONITOR_TEST_CHANNEL=@channel node_modules/node/bin/node --env-file=.env.local --import tsx scripts/telegram-monitor-acceptance.ts`. It uses an isolated ledger and copied login session, joins the channel, checks new/edit/delete updates, and removes its post. Membership is retained.

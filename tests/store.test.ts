@@ -22,7 +22,7 @@ function fixture() {
     channelId: c.id,
     name: "AI",
     task: "AI news",
-    sources: [{ kind: "telegram", reference: "@source", trust: "always" }],
+    sources: [{ kind: "telegram", reference: "@source" }],
     schedule: { kind: "interval", minutes: 5 },
     freshnessHours: 24,
   });
@@ -62,14 +62,14 @@ test("persistent settings, cursors, inbox and deduplicated publication", () => {
   f.s.source("@source", [{ id: 10, text: "News" }], 10);
   f.s.ingest([{ update_id: 9 }, { update_id: 9 }]);
 
-  const p = { channelId: f.c.id, headline: "Story", text: "Text", evidence: [], media: [] };
+  const p = { channelId: f.c.id, headline: "Story", text: "Text", media: [] };
 
   assert.equal(f.s.enqueue(p, "story", null).id, f.s.enqueue(p, "story", null).id);
   f.s.close();
 
   const reopened = new Store(f.dir);
 
-  assert.equal(reopened.job(f.j.id).sources[0].trust, "always");
+  assert.deepEqual(reopened.job(f.j.id).sources[0], { kind: "telegram", reference: "@source" });
   assert.equal(reopened.get("source.cursor:@source", 0), 10);
   assert.equal(reopened.inbox().length, 1);
   assert.equal(reopened.get("poll.offset", 0), 10);
@@ -94,7 +94,7 @@ test("overlapping dispatchers cannot claim active job twice; paused and changed 
   }
 });
 
-test("live source updates cannot advance a history checkpoint; old corrections persist atomically", () => {
+test("live source edits persist without starting correction work or advancing history checkpoints", () => {
   const f = fixture();
 
   try {
@@ -105,7 +105,7 @@ test("live source updates cannot advance a history checkpoint; old corrections p
     );
     assert.equal(f.s.get("source.cursor:@source", 0), 10);
     assert.deepEqual(f.s.source("@source", [{ id: 10, text: "Corrected" }]), [10]);
-    assert.equal(f.s.get("correction.pending:" + f.j.id, false), true);
+    assert.equal(f.s.recoverRuns().length, 0);
     assert.deepEqual(f.s.source("@source", [{ id: 10, text: "Corrected" }]), []);
     assert.deepEqual(f.s.source("@source", [{ id: 10, text: "", deleted: true }]), [10]);
     assert.deepEqual(f.s.source("@source", [{ id: 10, text: "", deleted: true }]), []);
@@ -118,49 +118,8 @@ test("live source updates cannot advance a history checkpoint; old corrections p
     const reopened = new Store(f.dir);
 
     assert.equal(reopened.get("source.cursor:@source", 0), 11);
-    assert.equal(reopened.get("correction.pending:" + f.j.id, false), true);
+    assert.equal(reopened.sourceMessages("@source", [10])[0].deleted, true);
     reopened.close();
-  } finally {
-    f.clean();
-  }
-});
-
-test("correction runs snapshot old source changes and recover failed reviews without losing new edits", () => {
-  const f = fixture();
-
-  try {
-    f.s.source("@source", [{ id: 1, text: "Original" }], 1);
-    f.s.source("@source", [{ id: 1, text: "Correction" }]);
-
-    const run = f.s.claimCorrection(f.j.id)!;
-
-    assert.ok(run);
-    assert.deepEqual(f.s.get("run.sourceChanges:" + run.id, []), [
-      { source: "@source", messageId: 1 },
-    ]);
-    assert.equal(f.s.claimCorrection(f.j.id), null);
-    assert.equal(f.s.get("correction.pending:" + f.j.id, true), false);
-
-    f.s.source("@source", [{ id: 2, text: "Another report" }]);
-    f.s.source("@source", [{ id: 2, text: "Another correction" }]);
-    f.s.runState(run.id, "failed");
-    assert.equal(f.s.claimCorrection(f.j.id), null);
-
-    const retry = f.s.claimCorrection(f.j.id, Date.now() + 60001)!;
-
-    assert.ok(retry);
-    assert.deepEqual(f.s.get("run.sourceChanges:" + retry.id, []), [
-      { source: "@source", messageId: 2 },
-      { source: "@source", messageId: 1 },
-    ]);
-    assert.deepEqual(
-      f.s.sourceMessages("@source", [1, 2, 99]).map((m) => m.text),
-      ["Correction", "Another correction"],
-    );
-
-    f.s.runState(retry.id, "completed");
-    assert.equal(f.s.get("correction.pending:" + f.j.id, true), false);
-    assert.equal(f.s.claimCorrection(f.j.id, Date.now() + 120001), null);
   } finally {
     f.clean();
   }
@@ -180,7 +139,7 @@ test("calendar restart skips missed slots and publication claims are exclusive",
     assert.ok(f.s.job(j.id).nextDue > Date.now());
 
     const p = f.s.enqueue(
-      { channelId: f.c.id, headline: "Story", text: "Text", evidence: [], media: [] },
+      { channelId: f.c.id, headline: "Story", text: "Text", media: [] },
       "key",
       null,
     );
@@ -204,7 +163,6 @@ test("authoritative publication history retains old records and supports explici
             channelId: f.c.id,
             headline: "Story " + i,
             text: "Text",
-            evidence: [],
             media: [],
           },
           "story:" + i,
@@ -244,7 +202,7 @@ test("legacy jobs can be deleted while foreign keys and publication history surv
   try {
     const run = f.s.claimDue(f.j.nextDue + 1)[0];
     const publication = f.s.enqueue(
-      { channelId: f.c.id, headline: "Stored history", text: "History", evidence: [], media: [] },
+      { channelId: f.c.id, headline: "Stored history", text: "History", media: [] },
       "history",
       run.id,
     );

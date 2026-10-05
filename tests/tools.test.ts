@@ -20,7 +20,7 @@ const ctx: any = {
   callId: "call-1",
 };
 
-test("job executor preserves twice-daily schedules and always-trusted sources on replay", async () => {
+test("job executor preserves twice-daily schedules and configured sources on replay", async () => {
   const s = store();
   const c = s.saveChannel({
     chatId: "-1002",
@@ -36,7 +36,7 @@ test("job executor preserves twice-daily schedules and always-trusted sources on
       channelId: c.id,
       name: "Twice daily",
       task: "AI news",
-      sources: [{ kind: "telegram", reference: "@source", trust: "always" }],
+      sources: [{ kind: "telegram", reference: "@source" }],
       schedule: { kind: "calendar", times: ["07:00", "15:00"], timezone: "Africa/Nairobi" },
       freshnessHours: 24,
     },
@@ -47,7 +47,7 @@ test("job executor preserves twice-daily schedules and always-trusted sources on
   assert.equal(a.id, b.id);
   assert.equal(s.jobs().length, 1);
   assert.deepEqual(s.job(a.id).schedule, input.settings.schedule);
-  assert.equal(s.job(a.id).sources[0].trust, "always");
+  assert.deepEqual(s.job(a.id).sources[0], { kind: "telegram", reference: "@source" });
   await jobs.execute!({ action: "pause", id: a.id }, { ...ctx, callId: "pause" });
   assert.equal(s.job(a.id).enabled, false);
 });
@@ -141,10 +141,12 @@ test("model work concurrency is bounded and operational records survive reopenin
   assert.equal(s.recoverRuns().length, 2);
 });
 
-test("correction context and publication paging retain posts outside the recent history window", async () => {
+test("job context includes source updates and publication paging retains historical posts", async () => {
   const s = store();
 
   for (const run of s.recoverRuns()) s.runState(run.id, "completed");
+
+  for (const job of s.jobs()) s.enableJob(job.id, false);
 
   const channel = s.saveChannel({
     chatId: "-1003",
@@ -159,7 +161,7 @@ test("correction context and publication paging retain posts outside the recent 
     name: "Corrections",
     task: "AI news",
     freshnessHours: 24,
-    sources: [{ kind: "telegram", reference: "@oldsource", trust: "always" }],
+    sources: [{ kind: "telegram", reference: "@oldsource" }],
     schedule: { kind: "interval", minutes: 5 },
   });
   const records = Array.from({ length: 125 }, (_, i) =>
@@ -168,14 +170,6 @@ test("correction context and publication paging retain posts outside the recent 
         channelId: channel.id,
         headline: "Story " + i,
         text: "Published story",
-        evidence: [
-          {
-            url: `https://t.me/oldsource/${i + 1}`,
-            claim: "Source report",
-            sourceMessageId: i + 1,
-            sourceChatId: "@oldsource",
-          },
-        ],
         media: [],
       },
       "correctionstory:" + i,
@@ -190,7 +184,7 @@ test("correction context and publication paging retain posts outside the recent 
     Array.from({ length: 60 }, (_, i) => ({ id: i + 1000, text: "Recent report" })),
   );
 
-  const run = s.claimCorrection(job.id)!;
+  const run = s.claimDue(job.nextDue + 1).find((run) => run.jobId === job.id)!;
   const scoped = {
     ...ctx,
     session: {
@@ -201,8 +195,20 @@ test("correction context and publication paging retain posts outside the recent 
   const definition = (context as any).events["turn.started"]({}, scoped);
   const saved = JSON.parse(definition.content.slice(definition.content.indexOf("{")));
 
-  assert.ok(saved.previousPosts.some((p: any) => p.id === records[0].id));
-  assert.equal(saved.correctionEvidence[0].messages[0].text, "Retracted report");
+  assert.equal(saved.previousPosts.length, 20);
+  assert.equal(saved.sourceUpdates[0].messages[0].text, "Recent report");
+  assert.equal("correctionEvidence" in saved, false);
+
+  for (const action of ["edit", "delete"] as const) {
+    await assert.rejects(
+      async () =>
+        publications.execute!(
+          { action, id: records[0].id, reason: "Autonomous change", text: "Changed" },
+          scoped,
+        ),
+      /Only owner conversations/,
+    );
+  }
 
   const page = (await publications.execute!(
     { action: "list", channelId: channel.id, limit: 5, offset: 120 },

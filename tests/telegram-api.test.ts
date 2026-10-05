@@ -279,7 +279,7 @@ test("event batches are fixed, persistent, isolated and retry without losing lat
       channelId: channel.id,
       name: "Live",
       task: "News",
-      sources: [{ kind: "telegram", reference: "@source", trust: "verify" }],
+      sources: [{ kind: "telegram", reference: "@source" }],
       trigger: "source_updates",
       schedule: { kind: "interval", minutes: 5 },
       freshnessHours: 24,

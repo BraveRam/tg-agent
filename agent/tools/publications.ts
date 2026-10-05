@@ -11,32 +11,22 @@ import {
   revisePublication,
 } from "../lib/publishing";
 
-const evidence = z.object({
-  url: z.string().url(),
-  claim: z.string().min(1),
-  sourceMessageId: z.number().int().optional(),
-  sourceChatId: z.string().optional(),
-});
-
 const media = z.object({
   url: z.string().url().optional(),
   sourceChatId: z.string().optional(),
   sourceMessageId: z.number().int().optional(),
-  credit: z.string().min(1),
-  reuseAllowed: z.boolean(),
 });
 
 export default defineTool({
   availableInSubagents: false,
   description:
-    "List prior posts (newest first; paginate with limit/offset), publish sourced text/photos/albums, verify/reconcile deliveries, or edit/delete a recorded post. For autonomous corrections cite the evidence in reason. Never resend an uncertain post. Media requires permission and attribution. Auto posts are restricted to the current job destination.",
+    "List prior posts (newest first; paginate with limit/offset), publish text/photos/albums exactly as supplied, verify/reconcile Telegram delivery, or edit/delete a recorded post at the owner's request. Never resend an uncertain post. Scheduled posts are restricted to the current job destination; scheduled runs cannot edit or delete posts.",
   inputSchema: z.object({
     action: z.enum(["list", "publish", "verify", "reconcile", "edit", "delete"]),
     channelId: z.string().optional(),
     id: z.string().optional(),
     headline: z.string().optional(),
     text: z.string().optional(),
-    evidence: z.array(evidence).optional(),
     media: z.array(media).max(10).optional(),
     reason: z.string().optional(),
     limit: z.number().int().min(1).max(100).optional(),
@@ -66,7 +56,6 @@ export default defineTool({
           channelId: input.channelId,
           headline: input.headline,
           text: input.text,
-          evidence: input.evidence ?? [],
           media: input.media ?? [],
         },
         rid,
@@ -93,6 +82,8 @@ export default defineTool({
 
       return s.publication(input.id);
     }
+
+    if (rid) throw new Error("Only owner conversations may edit or delete posts");
 
     if (!input.reason) throw new Error("Reason required");
 

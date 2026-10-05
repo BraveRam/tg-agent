@@ -127,10 +127,6 @@ async function poll() {
   }
 }
 
-async function correctionRuns() {
-  for (const j of s.jobs()) s.claimCorrection(j.id);
-}
-
 async function dispatch() {
   s.resetMissedCalendar();
 
@@ -159,7 +155,6 @@ async function dispatch() {
       s.set("services", services);
 
       if (s.budgetAvailable()) {
-        await correctionRuns();
         s.claimDue();
         s.claimEventJobs();
       } else
@@ -191,11 +186,7 @@ async function dispatch() {
           continue;
         }
 
-        if (
-          job.sources.length &&
-          job.sources.every((src) => src.kind === "telegram") &&
-          s.get("run.mode:" + run.id, "news") === "news"
-        ) {
+        if (job.sources.length && job.sources.every((src) => src.kind === "telegram")) {
           const fingerprint = createHash("sha256")
             .update(JSON.stringify(job.sources.map((src) => s.sourceMessages(src.reference))))
             .digest("hex");

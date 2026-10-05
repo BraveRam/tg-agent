@@ -29,11 +29,8 @@ function fixture(mediaCount = 0, long = false) {
     channelId: c.id,
     headline: "New discovery",
     text: long ? "Story ".repeat(220) : "A sourced discovery.",
-    evidence: [{ url: "https://example.com/story", claim: "Discovery" }],
     media: Array.from({ length: mediaCount }, (_, i) => ({
       url: `https://example.com/${i}.jpg`,
-      credit: "Example CC BY",
-      reuseAllowed: true,
     })),
   };
   let next = 1;
@@ -251,7 +248,7 @@ test("failed destination does not republish successful destination", async () =>
   }
 });
 
-test("edits, deletions, attributed corrections preserve revisions and verify readback", async () => {
+test("owner edits and deletions preserve revisions and verify readback", async () => {
   const f = fixture();
 
   try {
@@ -275,7 +272,7 @@ test("edits, deletions, attributed corrections preserve revisions and verify rea
   }
 });
 
-test("tracking URLs and duplicate headlines cannot enqueue repeated stories", () => {
+test("duplicate headlines cannot enqueue repeated stories without source evidence", () => {
   const f = fixture();
 
   try {
@@ -283,7 +280,7 @@ test("tracking URLs and duplicate headlines cannot enqueue repeated stories", ()
     const b = enqueuePost(
       {
         ...f.post,
-        evidence: [{ ...f.post.evidence[0], url: "https://example.com/story?utm_source=tg" }],
+        text: "Another version of the same story",
       },
       null,
       f.s,
@@ -306,5 +303,25 @@ test("album verification requires actual media grouping", async () => {
     assert.equal(await verifyPublication(p.id, f.s, f.io), false);
   } finally {
     f.clean();
+  }
+});
+
+test("publishing preserves supplied text and captions without source or credit footers", async () => {
+  for (const count of [0, 1, 2]) {
+    const f = fixture(count);
+
+    try {
+      const p = enqueuePost(f.post, null, f.s);
+
+      await deliverPublication(p.id, f.s, f.io);
+      assert.equal(f.s.publication(p.id).status, "verified");
+      assert.equal(f.messages[0].text, f.post.text);
+      assert.equal(
+        f.messages.some((m) => /Sources:|Photos:/.test(m.text)),
+        false,
+      );
+    } finally {
+      f.clean();
+    }
   }
 });

@@ -30,9 +30,8 @@ export default defineChannel({
         return Response.json({ sessionId: existing.id });
       }
 
-      const mode = s.get<string>("run.mode:" + id, "news");
       const session = await from(id).send(
-        `Execute saved ${mode} run ${id}. Read authoritative job settings from injected context. ${mode === "correction" ? "Review source updates against your recorded posts and make evidenced corrections or retractions." : "Research new material, review relevant previous posts for corrections, and publish only worthwhile nonduplicate content."} Use no_reply when nothing needs publishing.`,
+        `Execute saved run ${id}. Read current job settings from injected context. Retrieve relevant fresh material, translate or write it in the channel language, and publish worthwhile nonduplicate content. Use no_reply when nothing needs publishing.`,
         {
           auth: {
             authenticator: "internal-job",
@@ -99,22 +98,7 @@ export default defineChannel({
 
             source: record.reference,
             cursor: s.get("source.cursor:" + record.reference, 0),
-            trackedIds: [
-              ...new Set(
-                s
-                  .publications()
-                  .flatMap((p) =>
-                    p.evidence
-                      .filter(
-                        (e) =>
-                          e.sourceMessageId &&
-                          (e.sourceChatId === record.reference ||
-                            e.url.includes("t.me/" + record.reference.replace("@", "") + "/")),
-                      )
-                      .map((e) => e.sourceMessageId!),
-                  ),
-              ),
-            ],
+            trackedIds: [],
           })),
       });
     }),

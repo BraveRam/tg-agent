@@ -4,50 +4,22 @@ import { Store, store } from "./store";
 import { bot, userbot, checkDestination, notify, TelegramError } from "./telegram";
 import type { Post, Publication } from "./types";
 
-export function canonicalUrl(value: string) {
-  const u = new URL(value);
-
-  if (!["http:", "https:"].includes(u.protocol))
-    throw new Error("Evidence requires public HTTP(S) source links");
-
-  u.hash = "";
-
-  for (const key of [...u.searchParams.keys()])
-    if (key.startsWith("utm_") || ["fbclid", "gclid"].includes(key)) u.searchParams.delete(key);
-
-  u.searchParams.sort();
-
-  return u.toString();
-}
-
 export function storyKey(post: Post) {
   return createHash("sha256")
-    .update(
-      post.evidence
-        .map((e) => canonicalUrl(e.url))
-        .sort()
-        .join("|"),
-    )
+    .update(post.headline.trim().toLowerCase() + "\n" + post.text.trim())
     .digest("hex");
 }
 
 export function validatePost(post: Post) {
-  if (!post.evidence.length) throw new Error("At least one source is required");
-
   if (!post.text.trim() || post.text.length > 4096)
     throw new Error("Text must be 1–4096 characters");
 
   if (post.media.length > 10) throw new Error("At most 10 photos per post");
 
   for (const media of post.media) {
-    if (!media.credit || !media.reuseAllowed)
-      throw new Error("Media must include credit and explicit reuse permission");
-
     if (!media.url && !(media.sourceChatId && media.sourceMessageId))
       throw new Error("Media source is missing");
   }
-
-  for (const e of post.evidence) canonicalUrl(e.url);
 }
 
 export function enqueuePost(post: Post, runId: string | null, s = store()) {
@@ -106,18 +78,9 @@ const defaultIO: PublisherIO = {
 };
 
 function expectedText(p: Publication) {
-  let text = p.text;
-  const links = [...new Set(p.evidence.map((e) => e.url))];
-  const missing = links.filter((link) => !text.includes(link));
+  if (p.text.length > 4096) throw new Error("Post exceeds Telegram text limit");
 
-  if (missing.length) text += "\n\nSources: " + missing.join("\n");
-
-  if (p.media.length)
-    text += "\n\nPhotos: " + [...new Set(p.media.map((m) => m.credit))].join("; ");
-
-  if (text.length > 4096) throw new Error("Post with attribution exceeds Telegram text limit");
-
-  return text;
+  return p.text;
 }
 
 function normalText(t: string) {
@@ -403,23 +366,20 @@ export async function revisePublication(
   const old = s.publication(id);
 
   if (!["verified", "unverified", "sent"].includes(old.status))
-    throw new Error("Publication must have known delivered message IDs before correction");
+    throw new Error("Publication must have known delivered message IDs before editing or deletion");
 
-  if (operation === "edit" && !text?.trim()) throw new Error("Correction text required");
+  if (operation === "edit" && !text?.trim()) throw new Error("Edit text required");
 
   if (
     operation === "edit" &&
     old.media.length &&
     old.messageIds.length === old.media.length &&
-    (text?.length ?? 0) + old.evidence.map((e) => e.url.length).reduce((a, b) => a + b, 0) + 100 >
-      1024
+    (text?.length ?? 0) > 1024
   )
-    throw new Error(
-      "Correction would exceed caption limit; publish a separate attributed correction instead",
-    );
+    throw new Error("Edit would exceed Telegram caption limit");
 
   if (operation === "delete" && old.sentAt && Date.now() - old.sentAt >= 48 * 3600000)
-    throw new Error("Bot API deletion window expired; publish a correction instead");
+    throw new Error("Bot API deletion window expired");
 
   s.revise(id, {
     operation,
@@ -429,7 +389,7 @@ export async function revisePublication(
     text: text ?? old.text,
     error: null,
   });
-  s.event("publication.correction", { id, operation, reason });
+  s.event("publication.revised", { id, operation, reason });
 
   const result = await deliverPublication(id, s, io);
 

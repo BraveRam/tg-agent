@@ -19,8 +19,6 @@ export interface SourceRecord {
   membership: "unknown" | "joining" | "awaiting_approval" | "joined" | "failed";
 }
 
-export type SourceChange = { source: string; messageId: number };
-
 export function store() {
   return (singleton ??= new Store(config().dataDir));
 }
@@ -167,14 +165,9 @@ export class Store {
           .run(id, job.id, job.version, due, "claimed", now + 600000);
         this.set("run.eventEnd:" + id, end);
         this.set(
-          "run.sourceChanges:" + id,
-          rows.map((row) => ({ source: row.source, messageId: row.message_id })),
-        );
-        this.set(
           "run.eventMessages:" + id,
           rows.map((row) => ({ source: row.source, message: JSON.parse(row.data) })),
         );
-        this.set("run.mode:" + id, "updates");
         claimed.push(this.run(id));
       }
 
@@ -411,37 +404,6 @@ export class Store {
     });
   }
 
-  claimCorrection(jobId: string, now = Date.now()): Run | null {
-    return this.transaction(() => {
-      const job = this.job(jobId);
-      const active = this.recoverRuns();
-
-      if (
-        !job.enabled ||
-        !this.get("correction.pending:" + jobId, false) ||
-        this.get("correction.retryAt:" + jobId, 0) > now ||
-        active.length >= 2 ||
-        active.some((run) => run.jobId === jobId)
-      )
-        return null;
-
-      const id = randomUUID();
-
-      this.db
-        .prepare("INSERT INTO runs VALUES(?,?,?,?,?,?,NULL)")
-        .run(id, job.id, job.version, now, "claimed", now + 600000);
-      this.set("run.mode:" + id, "correction");
-      this.set(
-        "run.sourceChanges:" + id,
-        this.get<SourceChange[]>("correction.changes:" + jobId, []),
-      );
-      this.set("correction.changes:" + jobId, []);
-      this.set("correction.pending:" + jobId, false);
-
-      return this.run(id);
-    });
-  }
-
   run(id: string): Run {
     const r = this.db.prepare("SELECT * FROM runs WHERE id=?").get(id) as any;
 
@@ -471,15 +433,6 @@ export class Store {
   runState(id: string, status: string, sessionId?: string) {
     this.transaction(() => {
       const run = this.run(id);
-
-      if (
-        ["failed", "cancelled"].includes(status) &&
-        ["claimed", "running"].includes(run.status) &&
-        this.get<string>("run.mode:" + id, "news") === "correction"
-      ) {
-        this.queueCorrection(run.jobId, this.get<SourceChange[]>("run.sourceChanges:" + id, []));
-        this.set("correction.retryAt:" + run.jobId, Date.now() + 60000);
-      }
 
       const end = this.get("run.eventEnd:" + id, 0);
 
@@ -696,34 +649,11 @@ export class Store {
         );
 
       if (changed.length) {
-        for (const j of this.jobs())
-          if (
-            j.sources.some(
-              (src) =>
-                src.kind === "telegram" &&
-                (src.reference === source || record?.aliases.includes(src.reference)),
-            )
-          )
-            this.queueCorrection(
-              j.id,
-              changed.map((messageId) => ({ source, messageId })),
-            );
-
         this.event("source.changed", { source, messageIds: changed });
       }
 
       return changed;
     });
-  }
-
-  private queueCorrection(jobId: string, changes: SourceChange[]) {
-    const pending = this.get<SourceChange[]>("correction.changes:" + jobId, []);
-    const unique = new Map(
-      [...pending, ...changes].map((change) => [JSON.stringify(change), change]),
-    );
-
-    this.set("correction.changes:" + jobId, [...unique.values()]);
-    this.set("correction.pending:" + jobId, true);
   }
 
   sourceMessages(source: string, ids?: number[]) {
