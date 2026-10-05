@@ -3,7 +3,7 @@ import { writeFileSync } from "node:fs";
 
 import { setup } from "./setup";
 import { doctor } from "./doctor";
-import { acquireLock, waitHealthy, retryDelay } from "./runtime";
+import { acquireLock, waitHealthy, retryDelay, nodeNetworkOptions } from "./runtime";
 
 const data = resolve(process.env.TG_DATA_DIR ?? ".data");
 
@@ -97,6 +97,8 @@ try {
     );
 
   await setup();
+
+  process.env.NODE_OPTIONS = nodeNetworkOptions(process.env.NODE_OPTIONS);
 
   const node = resolve("node_modules/node/bin/node");
   const port = process.env.TG_PORT ?? "2000";

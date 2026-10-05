@@ -238,10 +238,13 @@ test("generic API uploads albums and thumbnails, downloads privately, and preser
     const mutation = { method: "sendMessage", params: { chat_id: "12345", text: "Test" } };
     const uncertainCtx = { ...f.ctx, callId: "uncertain" };
 
-    assert.equal(
-      (await executeTelegramApi(mutation, uncertainCtx, f.s, failed)).status,
-      "uncertain",
-    );
+    const uncertain = await executeTelegramApi(mutation, uncertainCtx, f.s, failed);
+
+    assert.equal(uncertain.status, "uncertain");
+    assert.equal(uncertain.autoRetry, false);
+    assert.equal(uncertain.retryAt, undefined);
+    assert.match(uncertain.transportError, /\[redacted\] leaked transport error/);
+    assert.ok(!JSON.stringify(uncertain).includes("test-credential"));
     await executeTelegramApi(mutation, uncertainCtx, f.s, failed);
     assert.equal(attempts, 1);
 

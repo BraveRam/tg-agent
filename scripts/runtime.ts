@@ -1,6 +1,19 @@
 import { openSync, closeSync, readFileSync, unlinkSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 
+export function nodeNetworkOptions(existing = "") {
+  // Slow IPv4 handshakes must not be abandoned after Node's default 250 ms
+  // when the alternate IPv6 route is unavailable. Keep explicit user overrides.
+  if (
+    /--(?:no-network-family-autoselection|network-family-autoselection-attempt-timeout)\b/.test(
+      existing,
+    )
+  )
+    return existing;
+
+  return `${existing} --network-family-autoselection-attempt-timeout=2000`.trim();
+}
+
 export function acquireLock(dir: string, pid = process.pid) {
   mkdirSync(dir, { recursive: true, mode: 0o700 });
 

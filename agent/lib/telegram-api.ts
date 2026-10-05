@@ -207,7 +207,16 @@ export async function executeTelegramApi(
           ? { body: form }
           : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(params) }),
       });
-    } catch {
+    } catch (error) {
+      const cause = error instanceof Error ? error.cause : undefined;
+
+      telegramFailure.transportError = activityText(
+        cause instanceof Error
+          ? { name: cause.name, message: cause.message, code: (cause as any).code }
+          : error instanceof Error
+            ? error.message
+            : String(error),
+      );
       throw new TelegramError("Telegram response lost", true);
     }
 
@@ -277,7 +286,13 @@ export async function executeTelegramApi(
       ),
       retryAfter: error instanceof TelegramError ? error.retryAfter : 0,
       fingerprint,
-      retryAt: Date.now() + (error instanceof TelegramError ? error.retryAfter : 0) * 1000,
+      autoRetry: false,
+      ...(uncertain
+        ? {
+            recovery:
+              "Check delivery before attempting another send. No automatic retry is scheduled.",
+          }
+        : { retryAt: Date.now() + (error instanceof TelegramError ? error.retryAfter : 0) * 1000 }),
     };
 
     if (!readOnly) s.set(operation, saved);

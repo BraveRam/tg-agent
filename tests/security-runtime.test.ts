@@ -3,10 +3,32 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { execFileSync } from "node:child_process";
 
 import { ownerUpdate, requireOwner, requireControl, internalRequest } from "../agent/lib/security";
-import { acquireLock, retryDelay } from "../scripts/runtime";
+import { acquireLock, retryDelay, nodeNetworkOptions } from "../scripts/runtime";
 import { bot, TelegramError } from "../agent/lib/telegram";
+
+test("supervised Node processes inherit a usable connection window and preserve overrides", () => {
+  const value = execFileSync(
+    process.execPath,
+    ["-e", "console.log(require('node:net').getDefaultAutoSelectFamilyAttemptTimeout())"],
+    {
+      env: { ...process.env, NODE_OPTIONS: nodeNetworkOptions("--enable-source-maps") },
+      encoding: "utf8",
+    },
+  );
+
+  assert.equal(Number(value.trim()), 2000);
+  assert.equal(
+    nodeNetworkOptions("--network-family-autoselection-attempt-timeout=5000"),
+    "--network-family-autoselection-attempt-timeout=5000",
+  );
+  assert.equal(
+    nodeNetworkOptions("--no-network-family-autoselection"),
+    "--no-network-family-autoselection",
+  );
+});
 
 test("only owner private messages and callbacks are accepted", () => {
   const m = { from: { id: 42 }, chat: { id: 42, type: "private" } };
