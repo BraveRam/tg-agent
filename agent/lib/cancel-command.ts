@@ -32,7 +32,7 @@ export async function handleCancelCommand(
 
     command.result =
       result.status === "accepted"
-        ? "Stopping current task."
+        ? "Cancellation requested. The task may take a moment to stop."
         : "No active task in this private chat. /cancel does not control scheduled jobs.";
     s.set(key, command);
 

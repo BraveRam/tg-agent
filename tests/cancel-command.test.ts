@@ -56,7 +56,7 @@ test("cancel is owner-only, guarded to the recorded turn, replay-safe, and prese
     assert.equal(await handleCancelCommand(update, cancel, s, reply), true);
     assert.deepEqual(calls, [target]);
     assert.deepEqual(s.get("telegram.typing.active", {}), { background: "job-turn" });
-    assert.equal(replies[0], "Stopping current task.");
+    assert.equal(replies[0], "Cancellation requested. The task may take a moment to stop.");
     s.set(chatTurnKey, { sessionId: "owner-chat", turnId: "turn-2" });
     await handleCancelCommand(update, cancel, s, reply);
     assert.equal(calls.length, 1);
