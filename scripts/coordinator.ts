@@ -9,6 +9,7 @@ import { store } from "../agent/lib/store";
 import { bot, userbot, notify } from "../agent/lib/telegram";
 import { ownerUpdate } from "../agent/lib/security";
 import { deliverPublication, reconcilePublication } from "../agent/lib/publishing";
+import { refreshTyping } from "../agent/lib/typing";
 
 const c = config(),
   s = store();
@@ -191,8 +192,15 @@ async function dispatch() {
   }
 }
 
+async function typing() {
+  while (!stopped) {
+    await refreshTyping(s);
+    await wait(3000);
+  }
+}
+
 try {
-  await Promise.all([poll(), dispatch()]);
+  await Promise.all([poll(), dispatch(), typing()]);
 } catch (e) {
   console.error(e instanceof Error ? e.message : "Coordinator failed");
   process.exitCode = 1;

@@ -19,6 +19,8 @@ The bot must be an administrator with posting, editing and deletion rights in de
 
 `bun dev` runs Eve on loopback, the authenticated Python reader, durable Telegram polling, and the dispatcher. There is no public webhook. An existing Bot API webhook must be removed before polling starts. Jobs run while this command is active.
 
+While the agent works, the coordinator refreshes the owner's typing indicator every three seconds. It pauses while waiting for your input and stops refreshing when work completes, fails, or is cancelled; Telegram then clears the indicator automatically. Active work is recorded in SQLite so a coordinator restart can resume the heartbeat.
+
 Example requests:
 
 - “Post AI news to @mychannel in English every five minutes, sometimes with photos.”

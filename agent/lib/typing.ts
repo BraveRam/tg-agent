@@ -1,0 +1,73 @@
+import type { HookContext } from "eve/hooks";
+
+import { config } from "./config";
+import { requireOwner } from "./security";
+import { store, type Store } from "./store";
+import { bot, TelegramError } from "./telegram";
+
+const key = "telegram.typing.active";
+
+export function recordTyping(
+  event: { type: string; data?: any; meta: { id?: string } },
+  ctx: HookContext,
+  s: Store = store(),
+) {
+  try {
+    requireOwner(ctx);
+  } catch {
+    return;
+  }
+
+  if (ctx.session.parent || (ctx.agent.nodeId && ctx.agent.nodeId !== "root")) return;
+
+  const start = ["turn.started", "step.started"].includes(event.type);
+  const stop =
+    [
+      "turn.completed",
+      "turn.failed",
+      "turn.cancelled",
+      "session.waiting",
+      "session.failed",
+      "session.completed",
+    ].includes(event.type) ||
+    (event.type === "turn.waiting" && event.data?.on === "input");
+
+  if (!start && !stop) return;
+
+  s.transaction(() => {
+    const marker = event.meta.id ? "telegram.typing.event:" + event.meta.id : null;
+
+    if (marker && s.get(marker, false)) return;
+
+    const active = s.get<Record<string, string>>(key, {});
+    const turnId = event.data?.turnId;
+
+    if (start && turnId) active[ctx.session.id] = turnId;
+    else if (!turnId || active[ctx.session.id] === turnId) delete active[ctx.session.id];
+
+    s.set(key, active);
+
+    if (marker) s.set(marker, true);
+  });
+}
+
+export async function refreshTyping(
+  s: Store = store(),
+  send: (method: string, body: unknown) => Promise<unknown> = bot,
+  now = Date.now(),
+) {
+  if (
+    !config().ownerId ||
+    !Object.keys(s.get<Record<string, string>>(key, {})).length ||
+    s.get("telegram.typing.retryAt", 0) > now
+  )
+    return;
+
+  try {
+    await send("sendChatAction", { chat_id: config().ownerId, action: "typing" });
+  } catch (error) {
+    // Typing is best effort; it must never interrupt model work or duplicate a message.
+    if (error instanceof TelegramError && error.retryAfter)
+      s.set("telegram.typing.retryAt", now + error.retryAfter * 1000);
+  }
+}
