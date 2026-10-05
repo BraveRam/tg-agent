@@ -157,3 +157,52 @@ test("typing failures are harmless and honor Telegram flood waits", async () => 
     f.cleanup();
   }
 });
+
+test("failed and expired scheduled runs cannot keep typing alive after restart", async () => {
+  const f = fixture();
+
+  try {
+    const channel = f.s.saveChannel({
+      chatId: "-100123",
+      name: "Test",
+      language: "en",
+      style: "Brief",
+      timezone: "Africa/Nairobi",
+      images: "never",
+    });
+    const job = f.s.saveJob({
+      channelId: channel.id,
+      name: "Test",
+      task: "News",
+      sources: [],
+      schedule: { kind: "interval", minutes: 5 },
+      freshnessHours: 24,
+    });
+    const run = f.s.claimDue(job.nextDue + 1)[0];
+
+    f.s.runState(run.id, "running", "background");
+    f.s.set("telegram.typing.active", { background: "turn-0" });
+    f.s.runState(run.id, "failed");
+
+    const reopened = new Store(f.dir);
+    let calls = 0;
+    const send = async () => {
+      calls++;
+    };
+
+    try {
+      await refreshTyping(reopened, send);
+      assert.equal(calls, 0);
+      assert.deepEqual(reopened.get("telegram.typing.active", {}), {});
+      reopened.runState(run.id, "running", "background");
+      reopened.set("telegram.typing.active", { background: "turn-0", owner: "turn-1" });
+      await refreshTyping(reopened, send, reopened.run(run.id).leaseUntil + 1);
+      assert.equal(calls, 1);
+      assert.deepEqual(reopened.get("telegram.typing.active", {}), { owner: "turn-1" });
+    } finally {
+      reopened.close();
+    }
+  } finally {
+    f.cleanup();
+  }
+});

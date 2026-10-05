@@ -45,7 +45,16 @@ export class Store {
  CREATE TABLE IF NOT EXISTS events(id TEXT PRIMARY KEY,type TEXT NOT NULL,data TEXT NOT NULL,created_at INTEGER NOT NULL);
  CREATE TABLE IF NOT EXISTS source_records(reference TEXT PRIMARY KEY,data TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS source_updates(seq INTEGER PRIMARY KEY AUTOINCREMENT,source TEXT NOT NULL,message_id INTEGER NOT NULL,revision TEXT NOT NULL,data TEXT NOT NULL,received_at INTEGER NOT NULL,UNIQUE(source,message_id,revision));
- PRAGMA user_version=2;`);
+ `);
+
+    this.transaction(() => {
+      const columns = this.db.prepare("PRAGMA table_info(jobs)").all() as { name: string }[];
+
+      if (!columns.some((column) => column.name === "deleted_at"))
+        this.db.exec("ALTER TABLE jobs ADD COLUMN deleted_at INTEGER");
+
+      this.db.exec("PRAGMA user_version=3");
+    });
 
     for (const job of this.jobs()) this.registerJobSources(job);
   }
@@ -250,7 +259,7 @@ export class Store {
 
   jobs(): Job[] {
     return this.db
-      .prepare("SELECT * FROM jobs")
+      .prepare("SELECT * FROM jobs WHERE deleted_at IS NULL")
       .all()
       .map((r: any) => this.decodeJob(r));
   }
@@ -262,6 +271,7 @@ export class Store {
       enabled: !!r.enabled,
       version: r.version,
       nextDue: r.next_due,
+      ...(r.deleted_at ? { deletedAt: r.deleted_at } : {}),
     };
   }
 
@@ -277,12 +287,15 @@ export class Store {
     this.channel(data.channelId);
 
     const old = id ? this.job(id) : undefined;
+
+    if (old?.deletedAt) throw new Error("Job was deleted");
+
     const key = id ?? randomUUID();
     const due = nextDue(data.schedule, Date.now());
 
     this.db
       .prepare(
-        "INSERT INTO jobs VALUES(?,?,?,1,1,?) ON CONFLICT(id) DO UPDATE SET channel_id=excluded.channel_id,data=excluded.data,version=jobs.version+1,next_due=excluded.next_due",
+        "INSERT INTO jobs(id,channel_id,data,enabled,version,next_due) VALUES(?,?,?,1,1,?) ON CONFLICT(id) DO UPDATE SET channel_id=excluded.channel_id,data=excluded.data,version=jobs.version+1,next_due=excluded.next_due",
       )
       .run(key, data.channelId, JSON.stringify(data), due);
     this.event("job.saved", { id: key });
@@ -296,6 +309,8 @@ export class Store {
 
   enableJob(id: string, enabled: boolean) {
     const j = this.job(id);
+
+    if (j.deletedAt) throw new Error("Job was deleted");
 
     this.db
       .prepare("UPDATE jobs SET enabled=?,version=version+1,next_due=? WHERE id=?")
@@ -333,7 +348,11 @@ export class Store {
         .get(id) as any
     ).n;
 
-    this.db.prepare("DELETE FROM jobs WHERE id=?").run(id);
+    this.db
+      .prepare(
+        "UPDATE jobs SET enabled=0,version=version+1,deleted_at=COALESCE(deleted_at,?) WHERE id=?",
+      )
+      .run(Date.now(), id);
     this.event("job.deleted", { id, cancelledRuns });
 
     return {

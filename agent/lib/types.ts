@@ -53,6 +53,7 @@ export type Job = Omit<z.infer<typeof jobInputSchema>, "trigger"> & {
   enabled: boolean;
   version: number;
   nextDue: number;
+  deletedAt?: number;
 };
 
 export type Run = {

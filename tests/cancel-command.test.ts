@@ -62,7 +62,10 @@ test("cancel is owner-only, guarded to the recorded turn, replay-safe, and prese
     assert.equal(calls.length, 1);
     s.set(chatTurnKey, null);
     await handleCancelCommand({ ...update, update_id: 2 }, cancel, s, reply);
-    assert.equal(replies.at(-1), "No active task to cancel.");
+    assert.equal(
+      replies.at(-1),
+      "No active task in this private chat. /cancel does not control scheduled jobs.",
+    );
     assert.equal(calls.length, 1);
   } finally {
     s.close();

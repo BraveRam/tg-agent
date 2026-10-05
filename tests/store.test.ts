@@ -237,3 +237,61 @@ test("usage is replay-safe and daily budget blocks autonomous work", () => {
     f.clean();
   }
 });
+
+test("legacy jobs can be deleted while foreign keys and publication history survive restart", () => {
+  const f = fixture();
+
+  try {
+    const run = f.s.claimDue(f.j.nextDue + 1)[0];
+    const publication = f.s.enqueue(
+      { channelId: f.c.id, headline: "Stored history", text: "History", evidence: [], media: [] },
+      "history",
+      run.id,
+    );
+
+    // Reproduce a database created before job deletion was introduced.
+    f.s.db.exec("ALTER TABLE jobs DROP COLUMN deleted_at; PRAGMA user_version=2");
+    f.s.close();
+
+    const migrated = new Store(f.dir);
+
+    try {
+      const result = migrated.operation("delete-job", () => migrated.deleteJob(f.j.id));
+
+      assert.equal(result.deleted, true);
+      assert.equal(result.cancelledRuns, 1);
+      assert.equal(result.preservedRuns, 1);
+      assert.equal(result.preservedPublications, 1);
+      assert.deepEqual(migrated.jobs(), []);
+      assert.equal(migrated.run(run.id).status, "cancelled");
+      assert.equal(migrated.publication(publication.id).text, "History");
+      assert.ok(migrated.job(f.j.id).deletedAt);
+      assert.throws(() => migrated.enableJob(f.j.id, true), /deleted/);
+      assert.throws(() => migrated.saveJob(f.j, f.j.id), /deleted/);
+      assert.throws(() => migrated.activeRun(run.id));
+      assert.deepEqual(migrated.claimDue(f.j.nextDue + 600000), []);
+      assert.deepEqual(migrated.db.prepare("PRAGMA foreign_key_check").all(), []);
+      assert.deepEqual(
+        migrated.operation("delete-job", () => {
+          throw new Error("replayed deletion");
+        }),
+        result,
+      );
+    } finally {
+      migrated.close();
+    }
+
+    const reopened = new Store(f.dir);
+
+    try {
+      assert.deepEqual(reopened.jobs(), []);
+      assert.equal(reopened.publication(publication.id).runId, run.id);
+      assert.equal(reopened.run(run.id).jobId, f.j.id);
+      assert.deepEqual(reopened.db.prepare("PRAGMA foreign_key_check").all(), []);
+    } finally {
+      reopened.close();
+    }
+  } finally {
+    rmSync(f.dir, { recursive: true, force: true });
+  }
+});
