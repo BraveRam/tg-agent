@@ -8,7 +8,7 @@ import { activityText } from "./activity";
 import { requireOwner, runId } from "./security";
 import { store, type Store } from "./store";
 
-export const translationModel = "gemini-3.8-flash";
+export const translationModel = "gemini-3.7-flash";
 
 export const translationSchema = z.object({
   text: z.string().min(1).max(24000),
