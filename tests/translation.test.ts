@@ -69,7 +69,7 @@ test("translation uses Gemini, sends only draft/style, preserves output and pers
     const first = await translatePost(input, ctx, { s, generate });
 
     assert.equal(first.text, output);
-    assert.equal(first.estimatedCostUsd, 0.000105);
+    assert.equal(first.estimatedCostUsd, 0.0001875);
     assert.equal(s.spent(), first.estimatedCostUsd);
 
     const reopened = new Store(dir);
@@ -159,10 +159,10 @@ test("provider errors are redacted and incomplete outputs are charged but never 
       }),
       /incomplete/,
     );
-    assert.equal(s.spent(), 0.000105);
+    assert.equal(s.spent(), 0.0001875);
     assert.equal(s.get("translation:translation-owner:one", null), null);
     await translatePost(input, ctx, { s, generate: async () => success() });
-    assert.equal(s.spent(), 0.00021);
+    assert.equal(s.spent(), 0.000375);
   });
 });
 
