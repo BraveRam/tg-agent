@@ -17,6 +17,8 @@ First run asks for the AI Gateway key, BotFather bot token, your numeric Telegra
 
 The bot must be an administrator with posting, editing and deletion rights in destination channels. The dedicated user account must be able to read the source and destination channels. Send your bot a private Telegram message to start. `Ctrl+C` stops all workers. A second instance sharing the data directory cannot start.
 
+Send `/start` to enable the private chat's commands menu with `/start`, `/cancel`, `/reset`, and `/context`, and show their descriptions. This works without a model call.
+
 Send `/cancel` in the private bot chat to request cancellation of the current task, including a task waiting for your answer. This works without a model call. Scheduled jobs stay enabled; completed actions are not undone, and cancellation of running tools is cooperative.
 
 Send `/reset` to retire the current private chat session, cancel its active work, and start fresh on your next message. It clears Eve's conversation context and session-level memory while keeping saved owner memories, preferences, channels, sources, jobs, publishing history, and credentials.

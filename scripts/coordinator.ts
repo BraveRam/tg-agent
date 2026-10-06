@@ -13,6 +13,7 @@ import { refreshTyping } from "../agent/lib/typing";
 import { handleCancelCommand } from "../agent/lib/cancel-command";
 import { handleContextCommand } from "../agent/lib/context-command";
 import { handleResetCommand } from "../agent/lib/reset-command";
+import { handleStartCommand } from "../agent/lib/start-command";
 import {
   queueCallbackKeyboardRemoval,
   clearCallbackKeyboards,
@@ -72,6 +73,11 @@ async function poll() {
       }
 
       try {
+        if (await handleStartCommand(update)) {
+          s.inboxState(row.update_id, "delivered");
+          continue;
+        }
+
         if (
           await handleCancelCommand(
             update,
