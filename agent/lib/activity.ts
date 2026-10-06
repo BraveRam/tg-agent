@@ -21,6 +21,7 @@ export function activityText(value: unknown): string {
 
   for (const key of [
     "AI_GATEWAY_API_KEY",
+    "GOOGLE_API_KEY",
     "TELEGRAM_BOT_TOKEN",
     "TELEGRAM_API_HASH",
     "TG_INTERNAL_TOKEN",
