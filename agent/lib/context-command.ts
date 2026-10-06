@@ -1,7 +1,8 @@
 import { chatSessionKey } from "./cancel-command";
 import { ownerUpdate } from "./security";
 import { store, type Store } from "./store";
-import { notify } from "./telegram";
+import { config } from "./config";
+import { bot } from "./telegram";
 
 export type ContextStats = {
   model?: string;
@@ -141,61 +142,58 @@ type ContextIO = {
 };
 
 export function formatContext(stats: ContextStats | null, info: Inspection | null) {
-  const n = (value: number) => value.toLocaleString("en-US");
-  const limit = info?.contextWindowTokens;
-  const model = stats?.model ?? info?.modelId ?? "Unavailable";
-  const lines = [
-    "Context",
-    `Model: ${model}${info?.reasoning ? " · " + info.reasoning + " reasoning" : ""}`,
-    `Window: ${limit ? n(limit) + " tokens" : "Unavailable"}`,
-  ];
+  const escape = (value: string) =>
+    value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const model = info?.modelId ?? stats?.model ?? "Unavailable";
+  const window = info?.contextWindowTokens
+    ? info.contextWindowTokens.toLocaleString("en-US") + " tokens"
+    : "Unavailable";
+  const used =
+    stats?.fresh && stats.inputTokens !== undefined
+      ? stats.inputTokens.toLocaleString("en-US") +
+        " tokens" +
+        (info?.contextWindowTokens
+          ? ` · ${((stats.inputTokens / info.contextWindowTokens) * 100).toFixed(2)}%`
+          : "") +
+        " <i>(last request)</i>"
+      : stats?.inputTokens !== undefined
+        ? "Awaiting a fresh measurement"
+        : "No measurement yet";
 
-  if (stats?.fresh && stats.inputTokens !== undefined) {
-    const percent = limit ? ` (${((stats.inputTokens / limit) * 100).toFixed(2)}%)` : "";
+  return [
+    `<p><b>Model</b><br><code>${escape(model)}</code></p>`,
+    `<p><b>Context window</b><br>${window}</p>`,
+    `<p><b>Context used</b><br>${used}</p>`,
+    `<p><b>Available skills</b><br>${escape(info ? info.skills.join(" · ") || "none" : "Unavailable")}</p>`,
+  ].join("");
+}
 
-    lines.push(`Latest input: ${n(stats.inputTokens)} tokens${percent}`);
-  } else
-    lines.push(
-      stats?.inputTokens !== undefined
-        ? "Usage: awaiting a fresh measurement after compaction"
-        : "Usage: no provider measurement yet",
-    );
+export async function replyContext(
+  html: string,
+  key: string,
+  s: Store = store(),
+  send: (method: string, body: unknown) => Promise<unknown> = bot,
+) {
+  if (s.get("notice:" + key, false)) return;
 
-  if (stats?.outputTokens !== undefined && stats.fresh)
-    lines.push(`Latest output: ${n(stats.outputTokens)} tokens`);
-
-  if (stats?.cacheReadTokens !== undefined && stats.fresh)
-    lines.push(`Cached input: ${n(stats.cacheReadTokens)} tokens (included above)`);
-
-  lines.push(`State: ${stats?.activity ?? "no chat session"}`);
-  lines.push(`Compactions: ${stats?.compactions ?? 0}${stats?.compacting ? " · in progress" : ""}`);
-  lines.push(`Skills loaded this/last turn: ${stats?.loadedSkills.join(", ") || "none"}`);
-  lines.push(`Previously loaded in this session: ${stats?.previousSkills.join(", ") || "none"}`);
-
-  if (info) {
-    lines.push(`Available skills: ${info.skills.join(", ") || "none"}`);
-    lines.push(`Available tools: ${info.toolCount}`);
-  }
-
-  if (stats?.measuredAt) lines.push(`Measured: ${stats.measuredAt}`);
-
-  lines.push(
-    "Usage is the last model request, not cumulative spending. Later messages and tool results appear in the next measurement. Previously loaded skills may have been summarized.",
-  );
-
-  return lines.join("\n");
+  await send("sendRichMessage", {
+    chat_id: config().ownerId,
+    rich_message: { html },
+  });
+  s.set("notice:" + key, true);
 }
 
 export async function handleContextCommand(
   update: any,
   io: ContextIO,
   s: Store = store(),
-  reply: (text: string, key: string) => Promise<unknown> = notify,
+  reply: (text: string, key: string) => Promise<unknown> = (html, key) =>
+    replyContext(html, key, s),
 ) {
   if (!ownerUpdate(update) || !/^\/context(?:@\w+)?\s*$/i.test(update.message?.text ?? ""))
     return false;
 
-  const key = `telegram.context.command:${update.update_id}`;
+  const key = `telegram.context.command.rich:${update.update_id}`;
   let result = s.get<string | null>(key, null);
 
   if (!result) {

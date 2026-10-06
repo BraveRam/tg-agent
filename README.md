@@ -13,17 +13,21 @@ uv pip sync --python .venv/bin/python userbot/requirements.lock
 bun dev
 ```
 
-First run asks for the AI Gateway key, BotFather bot token, your numeric Telegram account ID, and Telegram API ID/hash from https://my.telegram.org. It then logs in the dedicated userbot account using your phone, code, and optional 2FA password. Secrets stay in the local terminal and `.env.local`; do not send them through chat. The main agent uses `xiaomi/mimo-v2.6-pro` through AI Gateway with low reasoning. Research runs directly in the main agent; there is no research specialist and root-copy delegation is disabled. Compaction starts at 2.5% of the native context window (roughly 26k tokens for MiMo), including instructions and tool schemas.
+First run asks for the AI Gateway key, BotFather bot token, your numeric Telegram account ID, and Telegram API ID/hash from https://my.telegram.org. It then logs in the dedicated userbot account using your phone, code, and optional 2FA password. Secrets stay in the local terminal and `.env.local`; do not send them through chat. By default, the main agent uses `openai/gpt-6-luna` through AI Gateway with low reasoning. Set `MODEL_PROVIDER=nvidia` and `NVIDIA_API_KEY` in `.env.local` to use `meta/muse-glimmer-30b` directly at `https://integrate.api.nvidia.com/v1`; set `MODEL_PROVIDER=vercel` to switch back. Restart `bun dev` after changing the selector. NVIDIA uses streaming, low reasoning, temperature 1 and top-p 0.95. Its documented 131,072-token context window is set explicitly, and calls to this free endpoint are recorded at zero dollar cost; other missing-price calls still pause autonomous work. Gemini translation continues to require `AI_GATEWAY_API_KEY` for either main provider. Research runs directly in the main agent; there is no research specialist and root-copy delegation is disabled. Automatic compaction uses a 100,000-token threshold, including instructions, tool schemas, and Eve's checkpoint-prompt overhead.
 
 The bot must be an administrator with posting, editing and deletion rights in destination channels. The dedicated user account must be able to read the source and destination channels. Send your bot a private Telegram message to start. `Ctrl+C` stops all workers. A second instance sharing the data directory cannot start.
 
-Send `/start` to enable the private chat's commands menu with `/start`, `/cancel`, `/reset`, and `/context`, and show their descriptions. This works without a model call.
+Send `/start` to enable the private chat's commands menu with `/start`, `/cancel`, `/reset`, `/compact`, and `/context`, and show their descriptions. This works without a model call.
+
+`/cancel` and `/reset` ask for confirmation with inline buttons when there is an active target. Choose Confirm to proceed or Keep it to leave it unchanged. Confirmations expire after five minutes and cannot affect a newer task or session.
 
 Send `/cancel` in the private bot chat to request cancellation of the current task, including a task waiting for your answer. This works without a model call. Scheduled jobs stay enabled; completed actions are not undone, and cancellation of running tools is cooperative.
 
 Send `/reset` to retire the current private chat session, cancel its active work, and start fresh on your next message. It clears Eve's conversation context and session-level memory while keeping saved owner memories, preferences, channels, sources, jobs, publishing history, and credentials.
 
-Send `/context` to see the effective model context window, latest provider-reported input usage and percentage, cached input, last output, working state, compactions, skills loaded this/last turn, historical skill loads, and the available skill/tool catalog. This is a direct command with no model call. Usage is the latest request, not cumulative token spending; after compaction it waits for a fresh provider measurement.
+Send `/context` to see the model, context window, used tokens and percentage, and available skills in a formatted Telegram rich message. Usage is from the latest model request and waits for a fresh measurement after compaction. This is a direct command with no model call.
+
+Send `/compact` to request a summary of the current chat context without resetting the conversation. If a task is active, Eve queues compaction until it settles. Summarization uses the configured model; saved preferences, channels, jobs, and credentials remain intact.
 
 Ask the agent to delete a job to remove its schedule and cancel queued or running occurrences. Historical runs and publications remain available for audit.
 
@@ -78,6 +82,8 @@ Eve is pinned to 0.70.0. The official `@agent-browser/eve` 0.38.2 registry packa
 
 `patches/eve@0.70.0.patch` adds shared SELinux labeling to Eve's read-only Docker resource mount, required on Fedora. It also adds an `onInputResponse` hook to authenticate native Telegram button selections before resuming a waiting turn; this app accepts only the owner in their private chat. Bun uses a hoisted dependency layout so the patched framework resolves its runtime dependencies. Run `bun run format` after changes.
 
+The patch also allows a successor session to finish when its original workflow's anchor is gone and that original workflow is already cancelled, completed, or failed. This handles development snapshot cleanup after a session handoff. Missing anchors for active workflows and unrelated errors still fail normally.
+
 This release is local and single-owner. Deployment, customer accounts, signed-in website browsing, and second-level schedules are outside its scope.
 
 ### General Telegram access and live sources
@@ -94,6 +100,6 @@ Live monitoring acceptance: start from an authorized disposable channel and run 
 
 ## Post translation
 
-MiMo remains the main agent and performs research directly. Amharic (`am`) and Afaan Oromo (`om`) posts use the `translate_post` tool with `gemini-3.7-flash` directly through Google. Set `GOOGLE_API_KEY` in `.env.local`; it stays on the host and is never supplied to the sandbox or model. The translator receives only the draft and relevant style preferences, loads saved channel style when given `channelId`, and returns text for the normal publishing flow. English posts skip translation. The agent is instructed to publish Gemini text unchanged and leave a failed translation unpublished, without a MiMo fallback. This routing is an agent instruction, not a restriction on the general Bot API tool.
+The main agent performs research directly. Amharic (`am`) and Afaan Oromo (`om`) posts use the `translate_post` tool with `google/gemini-3.7-flash` through Vercel AI Gateway. The translator uses `AI_GATEWAY_API_KEY` in `.env.local`; it stays on the host and is never supplied to the sandbox or model. The translator receives only the draft and relevant style preferences, loads saved channel style when given `channelId`, and returns text for the normal publishing flow. English posts skip translation. The agent is instructed to publish Gemini text unchanged and leave a failed translation unpublished, without a main-agent fallback. This routing is an agent instruction, not a restriction on the general Bot API tool.
 
-Calls allow two transient retries within a 45-second total timeout and honor turn cancellation. Successful results are persisted per tool call for replay. Reported input/output tokens are recorded with an estimated standard paid text cost ($0.75/$3.75 per million tokens through December 2026, doubling in January 2027, including thinking output) in the existing daily budget. Free-tier billing may be lower; failed requests without usage metadata cannot be accurately priced. Missing usage on a returned result pauses autonomous work for inspection.
+Calls allow two transient retries within a 45-second total timeout and honor turn cancellation. Successful results are persisted per tool call for replay. Reported input/output tokens are recorded with an estimated standard paid text cost ($0.75/$3.75 per million tokens through December 2026, doubling in January 2027, including thinking output) in the existing daily budget. Failed requests without usage metadata cannot be accurately priced. Missing usage on a returned result pauses autonomous work for inspection.

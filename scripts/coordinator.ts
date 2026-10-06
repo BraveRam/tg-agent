@@ -13,7 +13,9 @@ import { refreshTyping } from "../agent/lib/typing";
 import { handleCancelCommand } from "../agent/lib/cancel-command";
 import { handleContextCommand } from "../agent/lib/context-command";
 import { handleResetCommand } from "../agent/lib/reset-command";
+import { handleCompactCommand } from "../agent/lib/compact-command";
 import { handleStartCommand } from "../agent/lib/start-command";
+import { handleControlConfirmation } from "../agent/lib/control-confirmation";
 import {
   queueCallbackKeyboardRemoval,
   clearCallbackKeyboards,
@@ -73,7 +75,47 @@ async function poll() {
       }
 
       try {
+        if (
+          await handleControlConfirmation(
+            update,
+            async (confirmed) => {
+              if (
+                await handleCancelCommand(
+                  confirmed,
+                  ({ sessionId, turnId }) => client.sessions.attach(sessionId).cancel({ turnId }),
+                  s,
+                )
+              )
+                return;
+
+              await handleResetCommand(
+                confirmed,
+                (sessionId) =>
+                  client.sessions
+                    .attach(sessionId)
+                    .reset({ reason: "Owner confirmed a fresh chat" }),
+                s,
+              );
+            },
+            s,
+          )
+        ) {
+          s.inboxState(row.update_id, "delivered");
+          continue;
+        }
+
         if (await handleStartCommand(update)) {
+          s.inboxState(row.update_id, "delivered");
+          continue;
+        }
+
+        if (
+          await handleCompactCommand(
+            update,
+            (sessionId) => client.sessions.attach(sessionId).compact(),
+            s,
+          )
+        ) {
           s.inboxState(row.update_id, "delivered");
           continue;
         }

@@ -3,6 +3,8 @@ import { randomBytes } from "node:crypto";
 import { resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 
+import { mainModelProvider } from "../agent/lib/main-model";
+
 const fields = [
   "AI_GATEWAY_API_KEY",
   "TELEGRAM_BOT_TOKEN",
@@ -57,7 +59,13 @@ async function secret(label: string): Promise<string> {
 export async function setup() {
   const values: Record<string, string> = {};
 
-  for (const key of fields) {
+  // Gateway is still needed for Gemini translation when the main agent uses NVIDIA.
+  const requiredFields = [
+    ...fields,
+    ...(mainModelProvider() === "nvidia" ? ["NVIDIA_API_KEY"] : []),
+  ];
+
+  for (const key of requiredFields) {
     if (process.env[key]) {
       values[key] = process.env[key]!;
       continue;
@@ -65,7 +73,7 @@ export async function setup() {
 
     if (!process.stdin.isTTY)
       throw new Error(
-        `Missing ${fields.filter((k) => !process.env[k]).join(", ")}. Open a terminal and run bun dev for setup, or populate .env.local.`,
+        `Missing ${requiredFields.filter((k) => !process.env[k]).join(", ")}. Open a terminal and run bun dev for setup, or populate .env.local.`,
       );
 
     values[key] = await secret(key);

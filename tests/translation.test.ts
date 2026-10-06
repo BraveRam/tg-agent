@@ -16,9 +16,9 @@ const ctx: any = {
 async function fixture(fn: (s: Store, dir: string) => Promise<void>) {
   const dir = mkdtempSync(join(tmpdir(), "tg-translation-"));
   const s = new Store(dir);
-  const oldKey = process.env.GOOGLE_API_KEY;
+  const oldKey = process.env.AI_GATEWAY_API_KEY;
 
-  process.env.GOOGLE_API_KEY = "test-google-secret";
+  process.env.AI_GATEWAY_API_KEY = "test-gateway-secret";
 
   try {
     await fn(s, dir);
@@ -26,8 +26,8 @@ async function fixture(fn: (s: Store, dir: string) => Promise<void>) {
     s.close();
     rmSync(dir, { recursive: true, force: true });
 
-    if (oldKey === undefined) delete process.env.GOOGLE_API_KEY;
-    else process.env.GOOGLE_API_KEY = oldKey;
+    if (oldKey === undefined) delete process.env.AI_GATEWAY_API_KEY;
+    else process.env.AI_GATEWAY_API_KEY = oldKey;
   }
 }
 
@@ -37,7 +37,7 @@ const success = (text = "Translated post") => ({
   usage: { inputTokens: 100, outputTokens: 30 },
 });
 
-test("translation uses Gemini, sends only draft/style, preserves output and persists replay with cost", async () => {
+test("translation uses Gemini through Gateway, sends only draft/style, preserves output and persists replay with cost", async () => {
   await fixture(async (s, dir) => {
     const channel = s.saveChannel({
       chatId: "-100200",
@@ -57,6 +57,9 @@ test("translation uses Gemini, sends only draft/style, preserves output and pers
     const generate = async (options: any) => {
       calls++;
       assert.equal(options.model.modelId, translationModel);
+      assert.equal(options.model.provider, "gateway");
+      assert.equal(options.reasoning, "low");
+      assert.equal(options.model.modelId, "google/gemini-3.7-flash");
       assert.deepEqual(JSON.parse(options.prompt), { style: channel.style, draft: input.text });
       assert.match(options.system, /Amharic in Ethiopic script/);
       assert.equal(options.messages, undefined);
@@ -141,17 +144,17 @@ test("provider errors are redacted and incomplete outputs are charged but never 
       translatePost(input, ctx, {
         s,
         generate: async () => {
-          throw new Error("Rejected test-google-secret");
+          throw new Error("Rejected test-gateway-secret");
         },
       }),
       (error: any) => {
-        assert.doesNotMatch(error.message, /test-google-secret/);
+        assert.doesNotMatch(error.message, /test-gateway-secret/);
         assert.match(error.message, /Do not publish or fall back/);
 
         return true;
       },
     );
-    assert.equal(activityText("test-google-secret"), "[redacted]");
+    assert.equal(activityText("test-gateway-secret"), "[redacted]");
     await assert.rejects(
       translatePost(input, ctx, {
         s,
@@ -176,9 +179,9 @@ test("missing key, cancellation and missing usage do not produce a publishable t
       return success();
     };
 
-    delete process.env.GOOGLE_API_KEY;
-    await assert.rejects(translatePost(input, ctx, { s, generate }), /GOOGLE_API_KEY/);
-    process.env.GOOGLE_API_KEY = "test-google-secret";
+    delete process.env.AI_GATEWAY_API_KEY;
+    await assert.rejects(translatePost(input, ctx, { s, generate }), /AI_GATEWAY_API_KEY/);
+    process.env.AI_GATEWAY_API_KEY = "test-gateway-secret";
 
     const controller = new AbortController();
 

@@ -6,7 +6,8 @@ const commands = [
   { command: "start", description: "Show commands and enable the menu" },
   { command: "cancel", description: "Cancel the current chat task" },
   { command: "reset", description: "Start a fresh conversation" },
-  { command: "context", description: "Show context usage, skills and tools" },
+  { command: "compact", description: "Summarize the current chat context" },
+  { command: "context", description: "Show model, context usage and skills" },
 ];
 
 export async function handleStartCommand(update: any) {
