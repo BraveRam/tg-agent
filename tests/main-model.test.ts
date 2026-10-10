@@ -4,21 +4,28 @@ import assert from "node:assert/strict";
 import { streamText, tool } from "ai";
 import { z } from "zod";
 
-import { mainModelConfig, isFreeNvidiaModel } from "../agent/lib/main-model";
+import { mainModelConfig, isFreeNvidiaModel, isSubscriptionModel } from "../agent/lib/main-model";
 
-test("provider selection validates credentials and preserves a 100k compaction threshold", () => {
+test("provider selection validates credentials and uses provider-appropriate compaction thresholds", () => {
   const vercel = mainModelConfig({ AI_GATEWAY_API_KEY: "test-gateway" });
   const nvidia = mainModelConfig({ MODEL_PROVIDER: "nvidia", NVIDIA_API_KEY: "test-nvidia" });
+  const subscription = mainModelConfig({ MODEL_PROVIDER: "chatgpt" });
 
   assert.equal(vercel.model.provider, "gateway");
   assert.equal(vercel.model.modelId, "openai/gpt-6-luna");
   assert.equal(nvidia.model.provider, "nvidia.chat");
   assert.equal(nvidia.model.modelId, "meta/muse-glimmer-30b");
 
-  for (const config of [vercel, nvidia])
+  assert.equal(subscription.model.provider, "codex.responses");
+  assert.equal(subscription.model.modelId, "gpt-6.1-sol");
+  assert.equal(subscription.reasoning, "medium");
+  assert.equal(isSubscriptionModel(subscription.model), true);
+  assert.equal(isSubscriptionModel(vercel.model), false);
+
+  for (const config of [vercel, nvidia, subscription])
     assert.equal(
       Math.floor(config.modelContextWindowTokens * config.compaction.thresholdPercent),
-      100_000,
+      config === nvidia ? Math.floor(131_072 * (230_000 / 1_050_000)) : 230_000,
     );
 
   assert.throws(() => mainModelConfig({ MODEL_PROVIDER: "other" }), /MODEL_PROVIDER/);

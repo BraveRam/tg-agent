@@ -8,6 +8,7 @@ const commands = [
   { command: "reset", description: "Start a fresh conversation" },
   { command: "compact", description: "Summarize the current chat context" },
   { command: "context", description: "Show model, context usage and skills" },
+  { command: "model", description: "Choose the main agent model" },
 ];
 
 export async function handleStartCommand(update: any) {

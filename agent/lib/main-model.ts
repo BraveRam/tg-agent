@@ -1,20 +1,28 @@
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { createGateway } from "ai";
+import { chatgpt } from "eve/models/openai";
 
 type Env = Record<string, string | undefined>;
 
 export const nvidiaModelId = "meta/muse-glimmer-30b";
+export const modelChoices = [
+  { id: "luna", label: "GPT-6 Luna · ChatGPT", provider: "chatgpt", modelId: "gpt-6-luna" },
+  { id: "sol", label: "GPT-6.1 Sol · ChatGPT", provider: "chatgpt", modelId: "gpt-6.1-sol" },
+  { id: "nvidia", label: "Muse Glimmer · NVIDIA", provider: "nvidia", modelId: nvidiaModelId },
+  { id: "vercel", label: "GPT-6 Luna · Vercel", provider: "vercel", modelId: "openai/gpt-6-luna" },
+] as const;
+export const modelSelectionKey = "agent.modelSelection";
 
 export function mainModelProvider(env: Env = process.env) {
   const provider = env.MODEL_PROVIDER ?? "vercel";
 
-  if (provider !== "vercel" && provider !== "nvidia")
-    throw new Error("MODEL_PROVIDER must be vercel or nvidia");
+  if (provider !== "vercel" && provider !== "nvidia" && provider !== "chatgpt")
+    throw new Error("MODEL_PROVIDER must be vercel, nvidia or chatgpt");
 
   return provider;
 }
 
-export function mainModelConfig(env: Env = process.env) {
+export function mainModelConfig(env: Env = process.env, chatgptModel = "gpt-6.1-sol") {
   const provider = mainModelProvider(env);
   // NVIDIA documents a 131,072-token combined input/output window for Muse Glimmer.
   const contextWindow = provider === "nvidia" ? 131_072 : 1_050_000;
@@ -36,15 +44,28 @@ export function mainModelConfig(env: Env = process.env) {
             max_tokens: body.max_tokens ?? 8192,
           }),
         })(nvidiaModelId)
-      : createGateway({ apiKey: env.AI_GATEWAY_API_KEY })("openai/gpt-6-luna");
+      : provider === "chatgpt"
+        ? chatgpt(chatgptModel)
+        : createGateway({ apiKey: env.AI_GATEWAY_API_KEY })("openai/gpt-6-luna");
+
+  if (typeof model === "string") throw new Error("Expected a runtime model handle");
 
   return {
-    // Both branches use runtime model handles so changing .env works after restart.
+    // Runtime model handles let the provider change after a restart.
     model,
-    reasoning: "low" as const,
+    reasoning:
+      provider === "chatgpt" && chatgptModel === "gpt-6.1-sol"
+        ? ("medium" as const)
+        : ("low" as const),
     modelContextWindowTokens: contextWindow,
-    compaction: { thresholdPercent: 100_000 / contextWindow },
+    compaction: { thresholdPercent: 230_000 / 1_050_000 },
   };
+}
+
+export function isSubscriptionModel(model: { provider: string; modelId: string } | null) {
+  return (
+    model?.provider === "codex.responses" && ["gpt-6.1-sol", "gpt-6-luna"].includes(model.modelId)
+  );
 }
 
 export function isFreeNvidiaModel(model: { provider: string; modelId: string } | null) {

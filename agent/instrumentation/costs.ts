@@ -1,7 +1,7 @@
 import { defineInstrumentation } from "eve/instrumentation";
 
 import { store } from "../lib/store";
-import { isFreeNvidiaModel } from "../lib/main-model";
+import { isFreeNvidiaModel, isSubscriptionModel } from "../lib/main-model";
 
 // Provider calls include retries and specialist calls; protocol step totals do not.
 export default defineInstrumentation({
@@ -17,8 +17,10 @@ export default defineInstrumentation({
         `model.attempt:${event.scope.attemptId}`,
         null,
       );
-      // Only this explicitly configured NVIDIA free endpoint has a known zero price.
-      const cost = event.usage.costUsd ?? (isFreeNvidiaModel(model) ? 0 : undefined);
+      // Subscription calls consume plan limits rather than this app's API dollar budget.
+      const cost =
+        event.usage.costUsd ??
+        (isFreeNvidiaModel(model) || isSubscriptionModel(model) ? 0 : undefined);
 
       if (cost !== undefined) {
         s.recordUsage(event.idempotencyKey, cost);

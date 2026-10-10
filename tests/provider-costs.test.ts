@@ -27,6 +27,9 @@ test("free NVIDIA calls keep background work active; unpriced providers still pa
       let index = 0;
       for (const [model, reportedCost, shouldPause] of [
         [{provider: "nvidia.chat", modelId: "meta/muse-glimmer-30b"}, undefined, false],
+        [{provider: "codex.responses", modelId: "gpt-6.1-sol"}, undefined, false],
+        [{provider: "codex.responses", modelId: "gpt-6-luna"}, undefined, false],
+        [{provider: "codex.responses", modelId: "other"}, undefined, true],
         [{provider: "gateway", modelId: "openai/gpt-6-luna"}, 0.01, false],
         [{provider: "gateway", modelId: "meta/muse-glimmer-30b"}, undefined, true],
         [{provider: "nvidia.chat", modelId: "other"}, undefined, true],

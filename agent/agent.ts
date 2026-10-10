@@ -1,8 +1,16 @@
-import { defineAgent } from "eve";
+import { defineAgent, defineDynamic } from "eve";
 
-import { mainModelConfig } from "./lib/main-model";
+import { selectedModelConfig } from "./lib/selected-model";
 
 export default defineAgent({
-  ...mainModelConfig(),
+  model: defineDynamic({
+    events: {
+      "step.started": () => {
+        const { model, reasoning, modelContextWindowTokens } = selectedModelConfig();
+        return { model, reasoning, modelContextWindowTokens };
+      },
+    },
+  }),
+  compaction: { thresholdPercent: 230_000 / 1_050_000 },
   tool: false,
 });
